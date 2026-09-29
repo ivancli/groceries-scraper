@@ -31,7 +31,7 @@ def _config_error(message: str) -> PydanticCustomError:
 
 # --- Pipes ------------------------------------------------------------------
 
-OPERATORS = (
+STEP_KINDS = (
     "css",
     "xpath",
     "jsonpath",
@@ -48,7 +48,7 @@ OPERATORS = (
     "template",
     "fn",
 )
-NO_ARG_OPERATORS = ("strip", "lower", "upper", "urljoin")
+NO_ARG_KINDS = ("strip", "lower", "upper", "urljoin")
 
 
 class Step(_Model):
@@ -71,25 +71,28 @@ class Step(_Model):
 
     @model_validator(mode="before")
     @classmethod
-    def _bare_operator(cls, data: Any) -> Any:
+    def _bare_kind(cls, data: Any) -> Any:
         # `- strip` in a Pipe list means `{strip: true}`.
-        if isinstance(data, str) and data in NO_ARG_OPERATORS:
+        if isinstance(data, str) and data in NO_ARG_KINDS:
             return {data: True}
         return data
 
     @model_validator(mode="after")
-    def _exactly_one_operator(self) -> Step:
-        ops = [name for name in OPERATORS if getattr(self, name) is not None]
-        if len(ops) != 1:
-            found = ", ".join(ops) or "none"
+    def _exactly_one_kind(self) -> Step:
+        kinds = self._kinds()
+        if len(kinds) != 1:
             raise _config_error(
-                f"a Step needs exactly one operator key ({', '.join(OPERATORS)}); found: {found}"
+                f"a Step needs exactly one of: {', '.join(STEP_KINDS)}; "
+                f"found: {', '.join(kinds) or 'none'}"
             )
         return self
 
+    def _kinds(self) -> list[str]:
+        return [name for name in STEP_KINDS if getattr(self, name) is not None]
+
     @property
-    def op(self) -> str:
-        return next(name for name in OPERATORS if getattr(self, name) is not None)
+    def kind(self) -> str:
+        return self._kinds()[0]
 
 
 def _as_list(value: Step | list[Step]) -> list[Step]:
@@ -102,7 +105,7 @@ if TYPE_CHECKING:
     Pipe = list[Step]
 else:
     Pipe = Annotated[
-        Annotated[Step, Tag(STEP_TAG)] | Annotated[list[Step], Tag(STEPS_TAG)],
+        Annotated[Step, Tag(STEP_TAG)] | Annotated[list[Step], Field(min_length=1), Tag(STEPS_TAG)],
         Discriminator(lambda value: STEPS_TAG if isinstance(value, list) else STEP_TAG),
         AfterValidator(_as_list),
     ]
@@ -118,7 +121,7 @@ class FieldSpec(_Model):
     type: FieldTypeName | None = None
     required: bool = False
     default: Any = None
-    pipe: Pipe = Field(default_factory=list, alias="<pipe>")  # == PIPE_KEY
+    pipe: Pipe = Field(default_factory=list, alias="<pipe>")  # mypy needs a literal; == PIPE_KEY
     fields: dict[str, FieldSpec] = Field(default_factory=dict)
     items: FieldSpec | None = None
     each: Pipe = Field(default_factory=list)
