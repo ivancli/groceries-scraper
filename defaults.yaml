@@ -1,5 +1,5 @@
 # Global runtime settings; a Site's `settings:` overrides these.
-# Stub values until the config loader lands.
+# Keys are allowlisted by `config.models.Settings`.
 download_delay: 1.0
 concurrent_requests_per_domain: 2
 obey_robots: true
