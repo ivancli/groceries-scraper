@@ -1,0 +1,224 @@
+"""Pipe evaluation. A Scope is a parsel `Selector` (HTML) or any other value (JSON)."""
+
+import importlib
+import json
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from functools import cache
+from typing import Any, NamedTuple
+from urllib.parse import urljoin
+
+from jinja2 import StrictUndefined, Template
+from jinja2.sandbox import SandboxedEnvironment
+from jsonpath_ng import JSONPath
+from jsonpath_ng.ext import parse as parse_jsonpath
+from parsel import Selector
+
+from groceries_scraper.config.models import Step
+
+
+@dataclass(frozen=True)
+class PipeContext:
+    variables: Mapping[str, Any] = field(default_factory=dict)
+    session: Mapping[str, Any] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict)
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class StepTrace:
+    step: str
+    output: list[Any]
+    error: str | None = None
+
+
+class PipeResult(NamedTuple):
+    values: list[Any]
+    trace: list[StepTrace]
+
+
+class StepError(Exception):
+    pass
+
+
+def run_pipe(pipe: list[Step], scope: Any, ctx: PipeContext) -> PipeResult:
+    """Run each Step over all current values; the first error ends the Pipe with no value."""
+    values = [scope]
+    trace: list[StepTrace] = []
+    for step in pipe:
+        try:
+            values = _STEPS[step.kind](step, values, ctx)
+        except Exception as exc:  # a Step must never crash extraction
+            trace.append(StepTrace(step.kind, [], _describe(exc)))
+            return PipeResult([], trace)
+        trace.append(StepTrace(step.kind, [_traceable(v) for v in values]))
+    return PipeResult(values, trace)
+
+
+def _describe(exc: Exception) -> str:
+    return str(exc) if isinstance(exc, StepError) else f"{type(exc).__name__}: {exc}"
+
+
+def _traceable(value: Any) -> Any:
+    return value.get() if isinstance(value, Selector) else value
+
+
+# --- Selector steps ---------------------------------------------------------
+
+
+def _html(value: Any, kind: str) -> Selector:
+    if not isinstance(value, Selector):
+        raise StepError(f"{kind} needs an HTML Scope, got {type(value).__name__}")
+    return value
+
+
+def _node_or_text(match: Selector) -> Any:
+    # ::text / ::attr() / @attr matches are strings, not nodes.
+    return match.root if isinstance(match.root, str) else match
+
+
+def _css(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.css is not None
+    return [_node_or_text(m) for v in values for m in _html(v, "css").css(step.css)]
+
+
+def _xpath(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.xpath is not None
+    return [_node_or_text(m) for v in values for m in _html(v, "xpath").xpath(step.xpath)]
+
+
+def _jsonpath(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.jsonpath is not None
+    expr = _compiled_jsonpath(step.jsonpath)
+    return [m.value for v in values for m in expr.find(_json(v))]
+
+
+@cache
+def _compiled_jsonpath(source: str) -> JSONPath:
+    return parse_jsonpath(source)
+
+
+def _json(value: Any) -> Any:
+    if isinstance(value, Selector):
+        raise StepError("jsonpath needs a JSON Scope, got HTML (add `parse: json`)")
+    return value
+
+
+def _parse(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    if step.parse == "json":
+        return [json.loads(_text(v, "parse")) for v in values]
+    return [Selector(text=_text(v, "parse")) for v in values]
+
+
+# --- Text transforms --------------------------------------------------------
+
+
+def _text(value: Any, kind: str) -> str:
+    if isinstance(value, Selector):
+        return str(value.xpath("string()").get())
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return str(value)
+    raise StepError(f"{kind} needs text, got {type(value).__name__}")
+
+
+def _each_text(kind: str, fn: Callable[[str], str]) -> Callable[..., list[Any]]:
+    def step(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+        return [fn(_text(v, kind)) for v in values]
+
+    return step
+
+
+def _regex(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.regex is not None
+    pattern = re.compile(step.regex)
+    matches = (pattern.search(_text(v, "regex")) for v in values)
+    return [m.group(1) if pattern.groups else m.group(0) for m in matches if m]
+
+
+def _replace(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.replace is not None
+    old, new = step.replace
+    return [_text(v, "replace").replace(old, new) for v in values]
+
+
+def _split(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.split is not None
+    return [part for v in values for part in _text(v, "split").split(step.split)]
+
+
+def _join(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.join is not None
+    return [step.join.join(_text(v, "join") for v in values)]
+
+
+def _urljoin(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    if ctx.url is None:
+        raise StepError("urljoin needs the response URL")
+    return [urljoin(ctx.url, _text(v, "urljoin")) for v in values]
+
+
+# --- Variables, templates and custom functions -------------------------------
+
+
+def _var(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.var is not None
+    source, name = ctx.variables, step.var
+    if name.startswith("session."):
+        source, name = ctx.session, name.removeprefix("session.")
+    if name not in source:
+        raise StepError(f"unknown Variable `{step.var}`")
+    return [source[name]]
+
+
+_JINJA = SandboxedEnvironment(undefined=StrictUndefined, autoescape=False)
+
+
+@cache
+def _compiled_template(source: str) -> Template:
+    return _JINJA.from_string(source)
+
+
+def _template(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.template is not None
+    template = _compiled_template(step.template)
+    names = {**ctx.variables, "session": ctx.session, "env": ctx.env}
+    return [template.render(names, value=_plain(v)) for v in values]
+
+
+def _plain(value: Any) -> Any:
+    return _text(value, "template") if isinstance(value, Selector) else value
+
+
+@cache
+def _resolved_fn(ref: str) -> Callable[[Any, PipeContext], Any]:
+    module, _, name = ref.partition(":")
+    fn: Callable[[Any, PipeContext], Any] = getattr(importlib.import_module(module), name)
+    return fn
+
+
+def _fn(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
+    assert step.fn is not None
+    fn = _resolved_fn(step.fn)
+    return [fn(v, ctx) for v in values]
+
+
+_STEPS: dict[str, Callable[[Step, list[Any], PipeContext], list[Any]]] = {
+    "css": _css,
+    "xpath": _xpath,
+    "jsonpath": _jsonpath,
+    "parse": _parse,
+    "regex": _regex,
+    "replace": _replace,
+    "strip": _each_text("strip", str.strip),
+    "split": _split,
+    "join": _join,
+    "lower": _each_text("lower", str.lower),
+    "upper": _each_text("upper", str.upper),
+    "urljoin": _urljoin,
+    "var": _var,
+    "template": _template,
+    "fn": _fn,
+}
