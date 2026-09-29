@@ -10,7 +10,7 @@ app.add_typer(fixture_app, name="fixture")
 
 def _not_implemented(command: str) -> NoReturn:
     typer.echo(f"`{command}` is not implemented yet.", err=True)
-    raise typer.Exit(code=2)
+    raise typer.Exit(code=1)
 
 
 @app.command()
