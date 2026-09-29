@@ -7,6 +7,9 @@ from pydantic import ValidationError
 
 from groceries_scraper.config.models import Site
 
+# src/groceries_scraper/config/loader.py -> repo root; the project runs from a checkout.
+DEFAULTS_PATH = Path(__file__).resolve().parents[3] / "defaults.yaml"
+
 
 class ConfigError(Exception):
     """A Site config failed to load; `errors` are `"<yaml path>: <message>"` lines."""
@@ -17,7 +20,7 @@ class ConfigError(Exception):
         super().__init__("\n  ".join([f"invalid Site config {source}:", *errors]))
 
 
-def load_site(path: Path, defaults_path: Path = Path("defaults.yaml")) -> Site:
+def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
     """Load a Site file, with its `settings:` merged over the defaults file."""
     return parse_site(_read_yaml(path), _read_yaml(defaults_path), source=str(path))
 

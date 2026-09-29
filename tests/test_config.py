@@ -160,3 +160,15 @@ def test_empty_pipe_is_rejected() -> None:
         "page_types.listing.follow[0].pass.sku: "
         "List should have at least 1 item after validation, not 0"
     ]
+
+
+def test_defaults_are_found_from_any_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site_file = tmp_path / "example.yaml"
+    site_file.write_text(_design_example())
+    monkeypatch.chdir(tmp_path)
+
+    site = load_site(site_file)
+
+    assert site.settings.record_level == "all"
