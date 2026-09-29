@@ -33,7 +33,7 @@ def test_full_design_example_parses(tmp_path: Path) -> None:
     assert site.start[0].page_type == "listing"
     tile_rule = site.page_types["listing"].follow[0]
     assert tile_rule.scope == "each"
-    assert [step.op for step in tile_rule.pass_["price"]] == ["css", "regex", "replace"]
+    assert [step.kind for step in tile_rule.pass_["price"]] == ["css", "regex", "replace"]
     assert tile_rule.pass_["category"][0].absolute is True
     assert tile_rule.request is not None
     assert tile_rule.request.json_body == {"sku": "{{ sku }}"}
@@ -43,7 +43,7 @@ def test_full_design_example_parses(tmp_path: Path) -> None:
     assert fields["images"].items is not None
     assert fields["nutrition"].fields["kcal"].type == "integer"
     assert fields["variants"].each[0].jsonpath == "$.variants[*]"
-    assert [step.op for step in fields["unit_price"].pipe] == ["jsonpath", "fn"]
+    assert [step.kind for step in fields["unit_price"].pipe] == ["jsonpath", "fn"]
 
 
 def _site(**sections: Any) -> dict[str, Any]:
@@ -84,7 +84,7 @@ def _tile_pass(pipe: Any) -> dict[str, Any]:
 
 
 A_PIPE = {"jsonpath": "$.x"}
-ONE_OPERATOR = "a Step needs exactly one operator key"
+ONE_KIND = "a Step needs exactly one of: css, xpath"
 
 
 @pytest.mark.parametrize(
@@ -135,14 +135,14 @@ ONE_OPERATOR = "a Step needs exactly one operator key"
         pytest.param(
             _tile_pass({"css": "b", "xpath": "//b"}),
             "page_types.listing.follow[0].pass.sku",
-            ONE_OPERATOR,
-            id="step-with-two-operators",
+            ONE_KIND,
+            id="step-with-two-kinds",
         ),
         pytest.param(
             _tile_pass([{"css": "b"}, {"absolute": True}]),
             "page_types.listing.follow[0].pass.sku[1]",
-            ONE_OPERATOR,
-            id="step-without-operator",
+            ONE_KIND,
+            id="step-without-kind",
         ),
     ],
 )
@@ -151,3 +151,12 @@ def test_invalid_config_reports_yaml_path(data: dict[str, Any], path: str, messa
 
     assert len(errors) == 1
     assert errors[0].startswith(f"{path}: {message}")
+
+
+def test_empty_pipe_is_rejected() -> None:
+    errors = _errors(_tile_pass([]))
+
+    assert errors == [
+        "page_types.listing.follow[0].pass.sku: "
+        "List should have at least 1 item after validation, not 0"
+    ]
