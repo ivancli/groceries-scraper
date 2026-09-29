@@ -1,0 +1,6 @@
+# Global runtime settings; a Site's `settings:` overrides these.
+# Stub values until the config loader lands.
+download_delay: 1.0
+concurrent_requests_per_domain: 2
+obey_robots: true
+record_level: all  # all | errors | off

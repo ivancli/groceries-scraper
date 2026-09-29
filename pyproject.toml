@@ -1,0 +1,45 @@
+[project]
+name = "groceries-scraper"
+version = "0.1.0"
+description = "Config-driven groceries scraper."
+authors = [
+    { name = "Ivan Li", email = "ivan.li@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "jinja2>=3.1.6",
+    "jsonpath-ng>=1.8.0",
+    "parsel>=1.12.1",
+    "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
+    "scrapy>=2.19.0",
+    "typer>=0.27.2",
+]
+
+[project.scripts]
+scrape = "groceries_scraper.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.20,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+    "types-pyyaml>=6.0.12.20260906",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
