@@ -41,5 +41,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 strict = true
 files = ["src", "tests"]
 
+[[tool.mypy.overrides]]
+module = ["jsonpath_ng", "jsonpath_ng.*"]  # ships no type hints
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
