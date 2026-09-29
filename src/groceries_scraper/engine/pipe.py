@@ -15,7 +15,7 @@ from jsonpath_ng import JSONPath
 from jsonpath_ng.ext import parse as parse_jsonpath
 from parsel import Selector
 
-from groceries_scraper.config.models import Step
+from groceries_scraper.config.models import Pipe, Step
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class StepError(Exception):
     pass
 
 
-def run_pipe(pipe: list[Step], scope: Any, ctx: PipeContext) -> PipeResult:
+def run_pipe(pipe: Pipe, scope: Any, ctx: PipeContext) -> PipeResult:
     """Run each Step over all current values; the first error ends the Pipe with no value."""
     values = [scope]
     trace: list[StepTrace] = []
@@ -74,8 +74,8 @@ def _html(value: Any, kind: str) -> Selector:
 
 
 def _node_or_text(match: Selector) -> Any:
-    # ::text / ::attr() / @attr matches are strings, not nodes.
-    return match.root if isinstance(match.root, str) else match
+    # ::text / ::attr() / @attr and XPath count()/boolean() matches are values, not nodes.
+    return match.root if isinstance(match.root, str | float | bool) else match
 
 
 def _css(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
@@ -100,8 +100,10 @@ def _compiled_jsonpath(source: str) -> JSONPath:
 
 
 def _json(value: Any) -> Any:
-    if isinstance(value, Selector):
-        raise StepError("jsonpath needs a JSON Scope, got HTML (add `parse: json`)")
+    # A JSON string Scope can't match anything useful; it's almost always unparsed text.
+    if isinstance(value, Selector | str):
+        got = "HTML" if isinstance(value, Selector) else "text"
+        raise StepError(f"jsonpath needs a JSON Scope, got {got} (add `parse: json`)")
     return value
 
 
@@ -151,13 +153,13 @@ def _split(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
 
 def _join(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
     assert step.join is not None
-    return [step.join.join(_text(v, "join") for v in values)]
+    return [step.join.join(_text(v, "join") for v in values)] if values else []
 
 
 def _urljoin(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
-    if ctx.url is None:
+    if values and ctx.url is None:
         raise StepError("urljoin needs the response URL")
-    return [urljoin(ctx.url, _text(v, "urljoin")) for v in values]
+    return [urljoin(ctx.url or "", _text(v, "urljoin")) for v in values]
 
 
 # --- Variables, templates and custom functions -------------------------------

@@ -47,7 +47,7 @@ def test_relative_xpath_in_a_node_scope_only_sees_that_node() -> None:
 def test_absolute_xpath_in_a_node_scope_sees_the_whole_document() -> None:
     second_tile = LISTING.css("div.tile")[1]
 
-    assert _run("{xpath: '//nav//text()', absolute: true}", second_tile) == ["Dairy"]
+    assert _run("{xpath: '//nav//text()'}", second_tile) == ["Dairy"]
 
 
 def test_next_data_chain_from_html_through_json() -> None:
@@ -84,6 +84,11 @@ def test_every_step_output_is_traced() -> None:
         ("{jsonpath: '$.a'}", LISTING, "jsonpath needs a JSON Scope, got HTML (add `parse: json`)"),
         ("{xpath: '//['}", LISTING, "ValueError: XPath error: Invalid expression in //["),
         ("{parse: json}", "{not json", "JSONDecodeError"),
+        (
+            "{jsonpath: '$.a'}",
+            '{"a": 1}',
+            "jsonpath needs a JSON Scope, got text (add `parse: json`)",
+        ),
     ],
 )
 def test_step_error_is_traced_and_pipe_yields_nothing(pipe: str, scope: Any, error: str) -> None:
@@ -206,3 +211,12 @@ def test_fn_failures_are_step_errors() -> None:
         _error("{fn: 'no_such_module:f'}")
         == "ModuleNotFoundError: No module named 'no_such_module'"
     )
+
+
+def test_non_node_xpath_results_are_plain_values() -> None:
+    assert _run("{xpath: 'count(//div)'}") == [2.0]
+
+
+def test_steps_after_a_no_match_yield_nothing() -> None:
+    assert _run("[{css: 'table'}, {join: ','}]") == []
+    assert _run("[{css: 'table::attr(href)'}, urljoin]") == []
