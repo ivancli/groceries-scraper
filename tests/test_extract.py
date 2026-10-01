@@ -5,13 +5,14 @@ import yaml
 from parsel import Selector
 
 from groceries_scraper.config.models import PageType
-from groceries_scraper.engine.extract import DroppedRecord, ExtractionResult, Record, extract
+from groceries_scraper.engine.extract import DroppedRecord, ExtractionResult, Record
+from groceries_scraper.engine.page import evaluate_page
 from groceries_scraper.engine.pipe import PipeContext, StepTrace
 
 
 def _extract(source: str, scope: Any) -> ExtractionResult:
     page_type = PageType.model_validate(yaml.safe_load(source))
-    return extract(page_type, scope, PipeContext())
+    return evaluate_page(page_type, scope, PipeContext()).extraction
 
 
 def test_page_type_without_record_emits_nothing() -> None:
@@ -163,7 +164,7 @@ def test_page_level_loop_with_no_nodes_emits_nothing() -> None:
     result = _extract(page, LISTING)
 
     assert result.records == []
-    assert [t.path for t in result.trace] == ["items"]
+    assert result.trace == []
 
 
 def test_object_field_evaluates_nested_fields_in_its_pipe_scope() -> None:

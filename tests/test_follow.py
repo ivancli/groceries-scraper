@@ -5,7 +5,8 @@ import yaml
 from parsel import Selector
 
 from groceries_scraper.config.models import PageType
-from groceries_scraper.engine.follow import FollowRequest, FollowResult, follow
+from groceries_scraper.engine.follow import FollowRequest, FollowResult
+from groceries_scraper.engine.page import evaluate_page
 from groceries_scraper.engine.pipe import PipeContext
 
 URL = "https://shop.example/c/dairy?page=1"
@@ -22,7 +23,7 @@ LISTING = """
 
 def _follow(source: str, scope: Any, ctx: PipeContext | None = None) -> FollowResult:
     page_type = PageType.model_validate(yaml.safe_load(source))
-    return follow(page_type, scope, ctx or PipeContext(url=URL), parent_ref=7)
+    return evaluate_page(page_type, scope, ctx or PipeContext(url=URL), parent_ref=7).follow
 
 
 def test_pagination_rule_targets_its_own_page_type() -> None:
