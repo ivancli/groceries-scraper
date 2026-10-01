@@ -3,6 +3,8 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from groceries_scraper.config import ConfigError, load_checked_site
+
 app = typer.Typer(no_args_is_help=True, help="Config-driven groceries scraper.")
 fixture_app = typer.Typer(no_args_is_help=True, help="Manage Golden Fixtures.")
 app.add_typer(fixture_app, name="fixture")
@@ -16,7 +18,19 @@ def _not_implemented(command: str) -> NoReturn:
 @app.command()
 def validate(site_config: Path) -> None:
     """Validate a Site config."""
-    _not_implemented("validate")
+    try:
+        _, warnings = load_checked_site(site_config)
+    except ConfigError as exc:
+        _warn(exc.warnings)
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    _warn(warnings)
+    typer.echo(f"{site_config} is valid")
+
+
+def _warn(warnings: list[str]) -> None:
+    for warning in warnings:
+        typer.echo(f"warning: {warning}", err=True)
 
 
 @app.command()
