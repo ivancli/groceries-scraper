@@ -149,6 +149,11 @@ class FieldSpec(_Model):
                 raise _config_error("an array Field with `each` needs `fields`")
             if has_items and self.fields:
                 raise _config_error("an array Field with `items` cannot have `fields`")
+            # The engine only coerces each match; anything else in `items` would be ignored.
+            if self.items is not None and (
+                self.items.type in ("object", "array") or self.items.model_fields_set - {"type"}
+            ):
+                raise _config_error("an array Field's `items` only takes a scalar `type`")
         elif self.type == "object":
             if not self.fields:
                 raise _config_error("an object Field needs `fields`")
