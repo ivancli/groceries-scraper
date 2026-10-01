@@ -130,6 +130,7 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 ### Variables & templating
 - Scopes: `session.*` (Session Setup), bare names (passed along the chain by `pass:`), `env.*` (environment; secrets never live in YAML).
 - Templates: `jinja2.sandbox.SandboxedEnvironment`, `StrictUndefined`.
+- In a `json` request body, a value that is exactly one `{{ expr }}` keeps the expression's type (`"{{ page }}"` → `2`; `"{{ text | int }}"` for scraped text); anything else renders to a string.
 
 ### Session (v1)
 - One Session per Site Run; cookies via Scrapy cookie middleware.
