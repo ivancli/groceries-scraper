@@ -6,6 +6,7 @@ import yaml
 from pydantic import ValidationError
 
 from groceries_scraper.config.models import Site
+from groceries_scraper.config.semantics import check_site
 
 # src/groceries_scraper/config/loader.py -> repo root; the project runs from a checkout.
 DEFAULTS_PATH = Path(__file__).resolve().parents[3] / "defaults.yaml"
@@ -14,15 +15,25 @@ DEFAULTS_PATH = Path(__file__).resolve().parents[3] / "defaults.yaml"
 class ConfigError(Exception):
     """A Site config failed to load; `errors` are `"<yaml path>: <message>"` lines."""
 
-    def __init__(self, source: str, errors: list[str]) -> None:
+    def __init__(self, source: str, errors: list[str], warnings: list[str] | None = None) -> None:
         self.source = source
         self.errors = errors
+        self.warnings = warnings or []
         super().__init__("\n  ".join([f"invalid Site config {source}:", *errors]))
 
 
 def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
     """Load a Site file, with its `settings:` merged over the defaults file."""
     return parse_site(_read_yaml(path), _read_yaml(defaults_path), source=str(path))
+
+
+def load_checked_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> tuple[Site, list[str]]:
+    """`load_site` plus semantic checks: what every command runs first. Returns warnings."""
+    site = load_site(path, defaults_path)
+    findings = check_site(site)
+    if findings.errors:
+        raise ConfigError(str(path), findings.errors, findings.warnings)
+    return site, findings.warnings
 
 
 def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
