@@ -37,25 +37,26 @@ class FollowResult:
 
 
 def follow(
-    page_type: PageType, scope: Any, ctx: PipeContext, parent_ref: int | None = None
+    page_type: PageType,
+    scope: Any,
+    nodes: list[Any],
+    ctx: PipeContext,
+    parent_ref: int | None = None,
 ) -> FollowResult:
+    """`scope: each` rules run over `nodes`, the page-level Loop's matches."""
     result = FollowResult()
-    nodes: list[Any] | None = None
     for index, rule in enumerate(page_type.follow):
-        rule_ = _Rule(index, rule, ctx, parent_ref, result)
+        evaluator = _RuleEvaluator(index, rule, ctx, parent_ref, result)
         if rule.scope == "page":
-            rule_.evaluate(scope, None)
-            continue
-        if nodes is None:
-            assert page_type.items is not None  # enforced by config validation
-            nodes = run_pipe(page_type.items.each, scope, ctx).values  # traced by extract
-        for node_index, node in enumerate(nodes):
-            rule_.evaluate(node, node_index)
+            evaluator.evaluate(scope, None)
+        else:
+            for node_index, node in enumerate(nodes):
+                evaluator.evaluate(node, node_index)
     return result
 
 
 @dataclass
-class _Rule:
+class _RuleEvaluator:
     index: int
     rule: FollowRule
     ctx: PipeContext
@@ -70,45 +71,45 @@ class _Rule:
         for name, pipe in self.rule.pass_.items():
             values = self._run(f"pass.{name}", pipe, scope, node)
             passed[name] = plain(values[0]) if values else None
-        child = replace(self.ctx, variables={**self.ctx.variables, **passed})
+        child_ctx = replace(self.ctx, variables={**self.ctx.variables, **passed})
         for value in selected:
             try:
-                request = self._request(plain(value), child)
+                request = self._request(plain(value), child_ctx)
             except Exception as exc:  # one bad render must not stop other requests or rules
                 self._trace("request", [], node, f"{type(exc).__name__}: {exc}")
             else:
                 self.result.requests.append(request)
 
-    def _request(self, value: Any, child: PipeContext) -> FollowRequest:
+    def _request(self, value: Any, child_ctx: PipeContext) -> FollowRequest:
         template = self.rule.request or RequestTemplate()
         names = {self.rule.as_: value} if self.rule.as_ else {}
 
-        def rendered(source: str) -> str:
-            return render(source, value, child, names)
+        def fill(source: str) -> str:
+            return render(source, value, child_ctx, names)
 
         if template.url is not None:
-            url = rendered(template.url)
+            url = fill(template.url)
         elif isinstance(value, str):
             url = value
         else:
             raise ValueError(f"selected value is not a URL: {value!r}")
-        headers = {name: rendered(v) for name, v in template.headers.items()}
+        headers = {name: fill(v) for name, v in template.headers.items()}
         body = None
         if template.json_body is not None:
-            body = json.dumps(_render_json(template.json_body, rendered))
+            body = json.dumps(_render_json(template.json_body, fill))
             _default_content_type(headers, "application/json")
         elif template.form is not None:
-            body = urlencode({name: rendered(v) for name, v in template.form.items()})
+            body = urlencode({name: fill(v) for name, v in template.form.items()})
             _default_content_type(headers, "application/x-www-form-urlencoded")
         elif template.body is not None:
-            body = rendered(template.body)
+            body = fill(template.body)
         return FollowRequest(
             method=template.method,
             url=urljoin(self.ctx.url or "", url),
             headers=headers,
             body=body,
             page_type=self.rule.page_type,
-            variables=dict(child.variables),
+            variables=dict(child_ctx.variables),
             parent_ref=self.parent_ref,
         )
 
@@ -123,14 +124,14 @@ class _Rule:
         self.result.trace.append(FollowTrace(self.index, path, steps, error, node))
 
 
-def _render_json(value: Any, rendered: Callable[[str], str]) -> Any:
-    """Render every string leaf; keys and non-string scalars are kept as written."""
+def _render_json(value: Any, fill: Callable[[str], str]) -> Any:
+    """Keys stay as written: they're the API's field names, not data."""
     if isinstance(value, str):
-        return rendered(value)
+        return fill(value)
     if isinstance(value, dict):
-        return {key: _render_json(v, rendered) for key, v in value.items()}
+        return {key: _render_json(v, fill) for key, v in value.items()}
     if isinstance(value, list):
-        return [_render_json(v, rendered) for v in value]
+        return [_render_json(v, fill) for v in value]
     return value
 
 

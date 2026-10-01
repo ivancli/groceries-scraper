@@ -6,8 +6,8 @@ import yaml
 from parsel import Selector
 from pydantic import TypeAdapter
 
-from groceries_scraper.config.models import Pipe
-from groceries_scraper.engine.pipe import PipeContext, StepTrace, run_pipe
+from groceries_scraper.config.models import TEMPLATE_NAMES, Pipe
+from groceries_scraper.engine.pipe import PipeContext, StepTrace, run_pipe, template_scope
 
 LISTING = Selector(
     text="""
@@ -220,3 +220,15 @@ def test_non_node_xpath_results_are_plain_values() -> None:
 def test_steps_after_a_no_match_yield_nothing() -> None:
     assert _run("[{css: 'table'}, {join: ','}]") == []
     assert _run("[{css: 'table::attr(href)'}, urljoin]") == []
+
+
+def test_config_reserves_exactly_the_names_templates_inject() -> None:
+    assert set(template_scope("v", PipeContext())) == set(TEMPLATE_NAMES)
+
+
+def test_template_names_cannot_be_shadowed_by_variables() -> None:
+    ctx = PipeContext(variables={"value": "var", "session": "var"}, session={"csrf": "tok"})
+
+    scope = template_scope("selected", ctx)
+
+    assert (scope["value"], scope["session"]) == ("selected", {"csrf": "tok"})

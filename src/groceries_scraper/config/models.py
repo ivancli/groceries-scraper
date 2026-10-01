@@ -183,7 +183,7 @@ class RequestTemplate(_Model):
         return self
 
 
-# Always in a template's scope; an `as:` name would shadow them.
+# Always in a template's scope, so an `as:` or `pass:` name using one would be ignored.
 TEMPLATE_NAMES = ("value", "session", "env")
 
 
@@ -205,9 +205,12 @@ class FollowRule(_Model):
     request: RequestTemplate | None = None
 
     @model_validator(mode="after")
-    def _as_not_reserved(self) -> FollowRule:
-        if self.as_ in TEMPLATE_NAMES:
-            raise _config_error(f"`as` cannot be a reserved template name: {self.as_}")
+    def _names_not_reserved(self) -> FollowRule:
+        names = {*self.pass_, *([self.as_] if self.as_ else [])}
+        if reserved := sorted(names & set(TEMPLATE_NAMES)):
+            raise _config_error(
+                f"`as` and `pass` cannot use reserved template names: {', '.join(reserved)}"
+            )
         return self
 
 

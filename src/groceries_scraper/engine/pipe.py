@@ -187,8 +187,16 @@ def render(
     source: str, value: Any, ctx: PipeContext, names: Mapping[str, Any] | None = None
 ) -> str:
     """Render a sandboxed template with `value`, Variables, `session` and `env` in scope."""
-    scope = {**ctx.variables, **(names or {}), "session": ctx.session, "env": ctx.env}
-    return _compiled_template(source).render(scope, value=plain(value))
+    return _compiled_template(source).render(template_scope(value, ctx, names))
+
+
+def template_scope(
+    value: Any, ctx: PipeContext, names: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    # Reserved names go last so a Variable can never shadow them; config's TEMPLATE_NAMES
+    # must list exactly these keys (enforced by a test).
+    reserved = {"value": plain(value), "session": ctx.session, "env": ctx.env}
+    return {**ctx.variables, **(names or {}), **reserved}
 
 
 def _template(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
@@ -197,7 +205,7 @@ def _template(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
 
 
 def plain(value: Any) -> Any:
-    """An HTML node as its text; other values unchanged."""
+    """Templates and Variables want an HTML node's text, never the parsel node itself."""
     return _text(value, "template") if isinstance(value, Selector) else value
 
 

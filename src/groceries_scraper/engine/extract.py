@@ -25,9 +25,9 @@ class DroppedRecord:
 @dataclass(frozen=True)
 class FieldTrace:
     path: str
+    record: int
     steps: list[StepTrace]
     error: str | None = None
-    record: int | None = None  # None: page-level, before any Record exists
 
 
 @dataclass(frozen=True)
@@ -37,14 +37,11 @@ class ExtractionResult:
     trace: list[FieldTrace] = field(default_factory=list)
 
 
-def extract(page_type: PageType, scope: Any, ctx: PipeContext) -> ExtractionResult:
+def extract(page_type: PageType, scopes: list[Any], ctx: PipeContext) -> ExtractionResult:
+    """`scopes` holds one Scope per Record: the Loop's nodes, or just the response."""
     if page_type.record is None:
         return ExtractionResult()
     result = ExtractionResult()
-    scopes = [scope]
-    if page_type.items is not None:
-        scopes, steps = run_pipe(page_type.items.each, scope, ctx)
-        result.trace.append(FieldTrace("items", steps))
     for index, node in enumerate(scopes):
         fields = _Fields(ctx, result.trace, index)
         data = fields.evaluate(page_type.fields, node, "")
@@ -126,7 +123,7 @@ class _Fields:
         return values
 
     def _trace(self, path: str, steps: list[StepTrace], error: str | None = None) -> None:
-        self.trace.append(FieldTrace(path, steps, error, self.record))
+        self.trace.append(FieldTrace(path, self.record, steps, error))
 
 
 # --- Coercion ---------------------------------------------------------------

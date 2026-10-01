@@ -168,8 +168,18 @@ A_RULE = {"select": {"css": "a::attr(href)"}, "page_type": "listing"}
         pytest.param(
             _site(page_types={"listing": {"follow": [{**A_RULE, "as": "session"}]}}),
             "page_types.listing.follow[0]",
-            "`as` cannot be a reserved template name: session",
+            "`as` and `pass` cannot use reserved template names: session",
             id="as-reserved-name",
+        ),
+        pytest.param(
+            _site(
+                page_types={
+                    "listing": {"follow": [{**A_RULE, "pass": {"env": A_PIPE, "x": A_PIPE}}]}
+                }
+            ),
+            "page_types.listing.follow[0]",
+            "`as` and `pass` cannot use reserved template names: env",
+            id="pass-reserved-name",
         ),
         pytest.param(
             _site(
