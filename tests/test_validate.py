@@ -267,12 +267,18 @@ def test_variables_carry_down_the_chain_and_through_pagination() -> None:
 
 def test_session_variable_must_be_extracted_by_session_setup() -> None:
     session = {"setup": [{"request": {"url": "https://x/"}, "extract": {"csrf": {"css": "m"}}}]}
-    fields = {"a": {"var": "session.csrf"}, "b": {"var": "session.token"}}
+    fields = {
+        "a": {"var": "session.csrf"},
+        "b": {"var": "session.token"},
+        "c": [{"css": "h1::text"}, {"template": "{{ session['csrf'] }}{{ session['tok'] }}"}],
+    }
 
     errors = _errors(_record_page("html", fields), session=session)
 
     assert errors == [
-        "page_types.listing.fields.b: Session Variable `session.token` is not set by Session Setup"
+        "page_types.listing.fields.b: Session Variable `session.token` is not set by Session Setup",
+        "page_types.listing.fields.c[1]: "
+        "Session Variable `session.tok` is not set by Session Setup",
     ]
 
 
@@ -347,7 +353,7 @@ def test_fn_must_be_importable() -> None:
 
 
 def test_templates_must_compile() -> None:
-    rule = _to("listing", request={"url": "{{ value ", "body": "{% if %}"})
+    rule = _to("listing", request={"url": "{{ value ", "body": "{{ value | no_such_filter }}"})
     fields = {"x": [{"css": "h1::text"}, {"template": "{{ value | }}"}]}
 
     errors = _errors(_record_page("html", fields, follow=[rule]))

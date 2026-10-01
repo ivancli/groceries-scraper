@@ -232,7 +232,7 @@ class _Checker:
                 self._fields(f"{path}.fields", spec.fields, value, in_loop)
 
     def pipe(self, path: str, pipe: Pipe, scope: Scope, in_loop: bool) -> Scope:
-        """Returns the Scope after the last Step; a single Step is addressed without an index."""
+        """A single Step is addressed without an index, matching its shorthand in the YAML."""
         for i, step in enumerate(pipe):
             step_path = path if len(pipe) == 1 else f"{path}[{i}]"
             if step.kind in ("css", "xpath"):
@@ -269,14 +269,15 @@ class _Checker:
     def _template(self, path: str, source: str, local: frozenset[str]) -> None:
         try:
             ast = _JINJA.parse(source)
+            _JINJA.compile(ast)  # unknown filters and tests only fail here, not in parse
         except TemplateSyntaxError as exc:
             self._error(path, f"invalid template: {exc.message}")
             return
         names = meta.find_undeclared_variables(ast) - set(TEMPLATE_NAMES) - local
         session = {
-            f"session.{node.attr}"
-            for node in ast.find_all(nodes.Getattr)
-            if isinstance(node.node, nodes.Name) and node.node.name == "session"
+            f"session.{key}"
+            for node in ast.find_all((nodes.Getattr, nodes.Getitem))
+            if (key := _session_key(node)) is not None
         }
         for name in sorted(names | session):
             self._variable(path, name)
@@ -296,6 +297,17 @@ class _Checker:
 
     def _error(self, path: str, message: str) -> None:
         self.findings.errors.append(f"{path}: {message}")
+
+
+def _session_key(node: nodes.Node) -> str | None:
+    """The key of `session.x` or `session["x"]`; a computed key can't be checked."""
+    if not (isinstance(node, nodes.Getattr | nodes.Getitem) and isinstance(node.node, nodes.Name)):
+        return None
+    if node.node.name != "session":
+        return None
+    if isinstance(node, nodes.Getattr):
+        return node.attr
+    return node.arg.value if isinstance(node.arg, nodes.Const) else None
 
 
 def _json_strings(path: str, value: Any) -> Iterable[tuple[str, str]]:
