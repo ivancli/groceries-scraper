@@ -183,14 +183,21 @@ def _compiled_template(source: str) -> Template:
     return _JINJA.from_string(source)
 
 
+def render(
+    source: str, value: Any, ctx: PipeContext, names: Mapping[str, Any] | None = None
+) -> str:
+    """Render a sandboxed template with `value`, Variables, `session` and `env` in scope."""
+    scope = {**ctx.variables, **(names or {}), "session": ctx.session, "env": ctx.env}
+    return _compiled_template(source).render(scope, value=plain(value))
+
+
 def _template(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
     assert step.template is not None
-    template = _compiled_template(step.template)
-    names = {**ctx.variables, "session": ctx.session, "env": ctx.env}
-    return [template.render(names, value=_plain(v)) for v in values]
+    return [render(step.template, v, ctx) for v in values]
 
 
-def _plain(value: Any) -> Any:
+def plain(value: Any) -> Any:
+    """An HTML node as its text; other values unchanged."""
     return _text(value, "template") if isinstance(value, Selector) else value
 
 
