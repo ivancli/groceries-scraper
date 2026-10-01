@@ -93,13 +93,37 @@ def test_no_match_falls_back_to_default() -> None:
     assert _extract(page, {}).records[0].data == {"on_sale": False}
 
 
-def test_record_missing_a_required_field_is_dropped_with_reason() -> None:
-    page = "{record: product, fields: {sku: {jsonpath: '$.sku', type: string, required: true}}}"
+def test_coercion_failure_is_null_even_with_a_default() -> None:
+    page = "{record: product, fields: {price: {jsonpath: '$.p', type: number, default: 0}}}"
 
-    result = _extract(page, {"sku": None})
+    assert _extract(page, {"p": "$3.50"}).records[0].data == {"price": None}
 
+
+def test_record_missing_a_required_field_is_dropped_with_reason_in_trace() -> None:
+    page = """
+    record: product
+    fields:
+      sku: {jsonpath: "$.sku", type: string, required: true}
+      name: {jsonpath: "$.name"}
+    """
+
+    result = _extract(page, {"sku": None, "name": "Milk"})
+
+    reason = "required Field `sku` is missing"
     assert result.records == []
-    assert result.dropped == [DroppedRecord(0, "required Field `sku` is missing")]
+    assert result.dropped == [DroppedRecord(0, reason)]
+    assert reason in [t.error for t in result.trace if t.path == "sku"]
+    assert "name" in [t.path for t in result.trace]
+
+
+def test_required_field_failing_coercion_is_dropped_with_the_coercion_error() -> None:
+    page = "{record: product, fields: {price: {jsonpath: '$.p', type: number, required: true}}}"
+
+    result = _extract(page, {"p": "$3.50"})
+
+    reason = "required Field `price` is invalid: cannot coerce '$3.50' to number"
+    assert result.dropped == [DroppedRecord(0, reason)]
+    assert reason in [t.error for t in result.trace if t.path == "price"]
 
 
 LISTING = Selector(
@@ -128,7 +152,9 @@ def test_page_level_loop_emits_one_record_per_node_and_counts_drops() -> None:
         {"sku": "B2", "name": "Cheese", "price": 4.0},
     ]
     assert result.dropped == [DroppedRecord(1, "required Field `sku` is missing")]
-    assert [(t.record, t.path) for t in result.trace if t.record == 1] == [(1, "sku")]
+    assert [(t.path, t.error) for t in result.trace if t.record == 1 and t.error] == [
+        ("sku", "required Field `sku` is missing")
+    ]
 
 
 def test_page_level_loop_with_no_nodes_emits_nothing() -> None:

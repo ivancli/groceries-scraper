@@ -47,17 +47,16 @@ def extract(page_type: PageType, scope: Any, ctx: PipeContext) -> ExtractionResu
         result.trace.append(FieldTrace("items", steps))
     for index, node in enumerate(scopes):
         fields = _Fields(ctx, result.trace, index)
-        try:
-            data = fields.evaluate(page_type.fields, node, "")
-        except _MissingRequired as exc:
-            result.dropped.append(DroppedRecord(index, f"required Field `{exc}` is missing"))
+        data = fields.evaluate(page_type.fields, node, "")
+        if fields.missing:
+            result.dropped.append(DroppedRecord(index, "; ".join(fields.missing)))
         else:
             result.records.append(Record(page_type.record, data))
     return result
 
 
-class _MissingRequired(Exception):
-    """Carries the Field path; aborts the whole Record."""
+# Distinct from None so `default` applies only when nothing matched, not after a failed Coercion.
+_NO_MATCH: Any = object()
 
 
 @dataclass
@@ -65,11 +64,13 @@ class _Fields:
     ctx: PipeContext
     trace: list[FieldTrace]
     record: int
+    missing: list[str] = field(default_factory=list)
 
     def evaluate(self, specs: dict[str, FieldSpec], scope: Any, prefix: str) -> dict[str, Any]:
         return {name: self._field(f"{prefix}{name}", spec, scope) for name, spec in specs.items()}
 
     def _field(self, path: str, spec: FieldSpec, scope: Any) -> Any:
+        error = None
         if spec.type == "object":
             value = self._object(path, spec, scope)
         elif spec.items is not None:
@@ -77,21 +78,23 @@ class _Fields:
         elif spec.each:
             value = self._loop(path, spec, scope)
         else:
-            value = self._scalar(path, spec, scope)
-        if value is None:
+            value, error = self._scalar(path, spec, scope)
+        if value is _NO_MATCH:
             value = spec.default
         if value is None and spec.required:
-            raise _MissingRequired(path)
+            reason = f"required Field `{path}` is " + (f"invalid: {error}" if error else "missing")
+            self._trace(path, [], reason)
+            self.missing.append(reason)
         return value
 
     def _object(self, path: str, spec: FieldSpec, scope: Any) -> Any:
         values = self._run(path, spec.pipe, scope)
-        return self.evaluate(spec.fields, values[0], f"{path}.") if values else None
+        return self.evaluate(spec.fields, values[0], f"{path}.") if values else _NO_MATCH
 
-    def _items(self, path: str, items: FieldSpec, pipe: Pipe, scope: Any) -> list[Any] | None:
+    def _items(self, path: str, items: FieldSpec, pipe: Pipe, scope: Any) -> Any:
         values = self._run(path, pipe, scope)
         if not values:
-            return None
+            return _NO_MATCH
         coerced = []
         for index, raw in enumerate(values):
             value, error = _coerced(raw, items.type)
@@ -100,20 +103,22 @@ class _Fields:
             coerced.append(value)
         return coerced
 
-    def _loop(self, path: str, spec: FieldSpec, scope: Any) -> list[Any] | None:
+    def _loop(self, path: str, spec: FieldSpec, scope: Any) -> Any:
         nodes = self._run(path, spec.each, scope)
         if not nodes:
-            return None
+            return _NO_MATCH
         return [
             self.evaluate(spec.fields, node, f"{path}[{index}].")
             for index, node in enumerate(nodes)
         ]
 
-    def _scalar(self, path: str, spec: FieldSpec, scope: Any) -> Any:
+    def _scalar(self, path: str, spec: FieldSpec, scope: Any) -> tuple[Any, str | None]:
         values, steps = run_pipe(spec.pipe, scope, self.ctx)
-        value, error = _coerced(values[0], spec.type) if values else (None, None)
+        value, error = _coerced(values[0], spec.type) if values else (_NO_MATCH, None)
         self._trace(path, steps, error)
-        return value
+        if value is None and error is None:  # JSON null is no value, same as no match
+            return _NO_MATCH, None
+        return value, error
 
     def _run(self, path: str, pipe: Pipe, scope: Any) -> list[Any]:
         values, steps = run_pipe(pipe, scope, self.ctx)
@@ -150,7 +155,7 @@ def _coerce(value: Any, type_: str | None) -> Any:
         value = value.xpath("string()").get()
     is_number = isinstance(value, int | float) and not isinstance(value, bool)
     match type_:
-        case _ if value is None:  # JSON null is no value, same as no match
+        case _ if value is None:
             return None
         case None:
             return value

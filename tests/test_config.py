@@ -126,6 +126,20 @@ ONE_KIND = "a Step needs exactly one of: css, xpath"
             "an array Field with `each` needs `fields`",
             id="array-each-without-fields",
         ),
+        *[
+            pytest.param(
+                _product_field({"type": "array", **A_PIPE, "items": items}),
+                "page_types.product.fields.f",
+                "an array Field's `items` only takes a scalar `type`",
+                id=f"array-items-with-{name}",
+            )
+            for name, items in [
+                ("default", {"type": "integer", "default": 0}),
+                ("required", {"required": True}),
+                ("pipe", {"type": "string", **A_PIPE}),
+                ("object-type", {"type": "object", "fields": {"g": A_PIPE}}),
+            ]
+        ],
         pytest.param(
             _product_field({"type": "object", **A_PIPE}),
             "page_types.product.fields.f",
