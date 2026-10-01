@@ -28,7 +28,7 @@ def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
 
 
 def load_checked_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> tuple[Site, list[str]]:
-    """`load_site` plus semantic checks: what every command runs first. Returns warnings."""
+    """`load_site` plus semantic checks: what every command runs first."""
     site = load_site(path, defaults_path)
     findings = check_site(site)
     if findings.errors:
