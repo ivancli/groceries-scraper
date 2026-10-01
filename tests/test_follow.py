@@ -201,3 +201,69 @@ def test_pass_without_match_passes_null() -> None:
     assert result.requests[0].variables == {"sku": None}
     [entry] = [t for t in result.trace if t.path == "pass.sku"]
     assert entry.error is None
+
+
+def test_json_value_that_is_one_expression_keeps_its_native_type() -> None:
+    page = """
+    response: json
+    follow:
+      - select: {jsonpath: "$.next"}
+        page_type: listing
+        pass: {page: {jsonpath: "$.page"}, sale: {jsonpath: "$.sale"}, text: {jsonpath: "$.text"}}
+        request:
+          method: POST
+          json:
+            page: "{{ page }}"
+            sale: "{{ sale }}"
+            text: "{{ text }}"
+            text_int: "{{ text | int }}"
+            ids: "{{ [page, text] }}"
+            mixed: "p{{ page }}"
+            two: "{{ page }}{{ text }}"
+            spaced: " {{ page }}"
+            literal: 2
+    """
+
+    [request] = _follow(page, {"next": "/n", "page": 2, "sale": True, "text": "3"}).requests
+
+    assert json.loads(request.body or "") == {
+        "page": 2,
+        "sale": True,
+        "text": "3",
+        "text_int": 3,
+        "ids": [2, "3"],
+        "mixed": "p2",
+        "two": "23",
+        "spaced": " 2",
+        "literal": 2,
+    }
+
+
+def test_json_expression_with_undefined_variable_is_a_render_error() -> None:
+    page = """
+    follow:
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+        request: {method: POST, json: {page: "{{ missing }}"}}
+    """
+
+    result = _follow(page, Selector(text=LISTING))
+
+    assert result.requests == []
+    [error] = [t for t in result.trace if t.error]
+    assert error.error is not None and "missing" in error.error
+
+
+def test_json_expression_is_sandboxed() -> None:
+    page = """
+    follow:
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+        request: {method: POST, json: {x: "{{ value.__class__ }}"}}
+    """
+
+    result = _follow(page, Selector(text=LISTING))
+
+    assert result.requests == []
+    [error] = [t for t in result.trace if t.error]
+    assert error.error is not None and error.error.startswith("SecurityError")

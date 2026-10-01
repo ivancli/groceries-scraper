@@ -9,7 +9,7 @@ from functools import cache
 from typing import Any, NamedTuple
 from urllib.parse import urljoin
 
-from jinja2 import StrictUndefined, Template
+from jinja2 import StrictUndefined, Template, Undefined
 from jinja2.sandbox import SandboxedEnvironment
 from jsonpath_ng import JSONPath
 from jsonpath_ng.ext import parse as parse_jsonpath
@@ -188,6 +188,28 @@ def render(
 ) -> str:
     """Render a sandboxed template with `value`, Variables, `session` and `env` in scope."""
     return _compiled_template(source).render(template_scope(value, ctx, names))
+
+
+# A whole string that is one `{{ expr }}`, with no other text or expressions.
+_ONE_EXPRESSION = re.compile(r"\{\{((?:(?!\{\{|\}\}).)*)\}\}", re.S)
+
+
+def render_native(
+    source: str, value: Any, ctx: PipeContext, names: Mapping[str, Any] | None = None
+) -> Any:
+    """Like `render`, but a lone `{{ expr }}` keeps its type, so JSON APIs get 2, not "2"."""
+    match = _ONE_EXPRESSION.fullmatch(source)
+    if match is None:
+        return render(source, value, ctx, names)
+    result = _compiled_expression(match.group(1))(**template_scope(value, ctx, names))
+    if isinstance(result, Undefined):
+        str(result)  # raises UndefinedError, as `render` would
+    return result
+
+
+@cache
+def _compiled_expression(source: str) -> Callable[..., Any]:
+    return _JINJA.compile_expression(source, undefined_to_none=False)
 
 
 def template_scope(

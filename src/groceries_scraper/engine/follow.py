@@ -7,7 +7,14 @@ from typing import Any
 from urllib.parse import urlencode, urljoin
 
 from groceries_scraper.config.models import FollowRule, PageType, RequestTemplate
-from groceries_scraper.engine.pipe import PipeContext, StepTrace, plain, render, run_pipe
+from groceries_scraper.engine.pipe import (
+    PipeContext,
+    StepTrace,
+    plain,
+    render,
+    render_native,
+    run_pipe,
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,9 @@ class _RuleEvaluator:
         def fill(source: str) -> str:
             return render(source, value, child_ctx, names)
 
+        def fill_native(source: str) -> Any:
+            return render_native(source, value, child_ctx, names)
+
         if template.url is not None:
             url = fill(template.url)
         elif isinstance(value, str):
@@ -96,7 +106,7 @@ class _RuleEvaluator:
         headers = {name: fill(v) for name, v in template.headers.items()}
         body = None
         if template.json_body is not None:
-            body = json.dumps(_render_json(template.json_body, fill))
+            body = json.dumps(_render_json(template.json_body, fill_native))
             _default_content_type(headers, "application/json")
         elif template.form is not None:
             body = urlencode({name: fill(v) for name, v in template.form.items()})
@@ -124,7 +134,7 @@ class _RuleEvaluator:
         self.result.trace.append(FollowTrace(self.index, path, steps, error, node))
 
 
-def _render_json(value: Any, fill: Callable[[str], str]) -> Any:
+def _render_json(value: Any, fill: Callable[[str], Any]) -> Any:
     """Keys stay as written: they're the API's field names, not data."""
     if isinstance(value, str):
         return fill(value)
