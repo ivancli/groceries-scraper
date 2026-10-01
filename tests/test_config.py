@@ -85,6 +85,7 @@ def _tile_pass(pipe: Any) -> dict[str, Any]:
 
 A_PIPE = {"jsonpath": "$.x"}
 ONE_KIND = "a Step needs exactly one of: css, xpath"
+A_RULE = {"select": {"css": "a::attr(href)"}, "page_type": "listing"}
 
 
 @pytest.mark.parametrize(
@@ -157,6 +158,28 @@ ONE_KIND = "a Step needs exactly one of: css, xpath"
             "page_types.listing.follow[0].pass.sku[1]",
             ONE_KIND,
             id="step-without-kind",
+        ),
+        pytest.param(
+            _site(page_types={"listing": {"follow": [{**A_RULE, "scope": "each"}]}}),
+            "page_types.listing",
+            "a Follow Rule with `scope: each` needs a page-level `items` Loop",
+            id="each-scope-without-loop",
+        ),
+        pytest.param(
+            _site(page_types={"listing": {"follow": [{**A_RULE, "as": "session"}]}}),
+            "page_types.listing.follow[0]",
+            "`as` cannot be a reserved template name: session",
+            id="as-reserved-name",
+        ),
+        pytest.param(
+            _site(
+                page_types={
+                    "listing": {"follow": [{**A_RULE, "request": {"form": {}, "body": "x"}}]}
+                }
+            ),
+            "page_types.listing.follow[0].request",
+            "a Request Template takes one of `json`, `form` or `body`",
+            id="two-request-bodies",
         ),
     ],
 )

@@ -173,12 +173,18 @@ class RequestTemplate(_Model):
     headers: dict[str, str] = Field(default_factory=dict)
     json_body: Any = Field(default=None, alias="json")
     form: dict[str, str] | None = None
+    body: str | None = None
 
     @model_validator(mode="after")
     def _one_body(self) -> RequestTemplate:
-        if self.json_body is not None and self.form is not None:
-            raise _config_error("a Request Template takes `json` or `form`, not both")
+        bodies = [self.json_body, self.form, self.body]
+        if sum(body is not None for body in bodies) > 1:
+            raise _config_error("a Request Template takes one of `json`, `form` or `body`")
         return self
+
+
+# Always in a template's scope; an `as:` name would shadow them.
+TEMPLATE_NAMES = ("value", "session", "env")
 
 
 class StartRequest(_Model):
@@ -194,8 +200,15 @@ class FollowRule(_Model):
     select: Pipe
     scope: Literal["page", "each"] = "page"
     page_type: str
+    as_: str | None = Field(default=None, alias="as")
     pass_: dict[str, Pipe] = Field(default_factory=dict, alias="pass")
     request: RequestTemplate | None = None
+
+    @model_validator(mode="after")
+    def _as_not_reserved(self) -> FollowRule:
+        if self.as_ in TEMPLATE_NAMES:
+            raise _config_error(f"`as` cannot be a reserved template name: {self.as_}")
+        return self
 
 
 class PageType(_Model):
@@ -204,6 +217,12 @@ class PageType(_Model):
     items: Loop | None = None
     fields: dict[str, FieldSpec] = Field(default_factory=dict)
     follow: list[FollowRule] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _each_scope_has_loop(self) -> PageType:
+        if self.items is None and any(rule.scope == "each" for rule in self.follow):
+            raise _config_error("a Follow Rule with `scope: each` needs a page-level `items` Loop")
+        return self
 
 
 # --- Site-level sections ----------------------------------------------------

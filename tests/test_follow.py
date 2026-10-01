@@ -1,0 +1,202 @@
+import json
+from typing import Any
+
+import yaml
+from parsel import Selector
+
+from groceries_scraper.config.models import PageType
+from groceries_scraper.engine.follow import FollowRequest, FollowResult, follow
+from groceries_scraper.engine.pipe import PipeContext
+
+URL = "https://shop.example/c/dairy?page=1"
+
+LISTING = """
+<nav class="crumbs"><a>Dairy</a></nav>
+<div class="tile" data-sku="A1"><a class="tile-link" href="/p/a1">Milk</a>
+  <span class="price">$1,234.50</span></div>
+<div class="tile" data-sku="B2"><a class="tile-link" href="/p/b2">Cheese</a>
+  <span class="price">$4.00</span></div>
+<a class="next" href="?page=2">Next</a>
+"""
+
+
+def _follow(source: str, scope: Any, ctx: PipeContext | None = None) -> FollowResult:
+    page_type = PageType.model_validate(yaml.safe_load(source))
+    return follow(page_type, scope, ctx or PipeContext(url=URL), parent_ref=7)
+
+
+def test_pagination_rule_targets_its_own_page_type() -> None:
+    page = """
+    follow:
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+    """
+
+    result = _follow(page, Selector(text=LISTING))
+
+    assert result.requests == [
+        FollowRequest(
+            method="GET",
+            url="https://shop.example/c/dairy?page=2",
+            headers={},
+            body=None,
+            page_type="listing",
+            variables={},
+            parent_ref=7,
+        )
+    ]
+
+
+def test_page_scope_follows_every_selected_value_with_inherited_variables() -> None:
+    page = """
+    follow:
+      - select: {css: "a.tile-link::attr(href)"}
+        page_type: product
+    """
+    ctx = PipeContext(url=URL, variables={"category": "Dairy"})
+
+    result = _follow(page, Selector(text=LISTING), ctx)
+
+    assert [(r.url, r.variables) for r in result.requests] == [
+        ("https://shop.example/p/a1", {"category": "Dairy"}),
+        ("https://shop.example/p/b2", {"category": "Dairy"}),
+    ]
+
+
+def test_each_scope_passes_per_tile_variables_to_the_matching_child_request() -> None:
+    page = """
+    items:
+      each: {css: "div.tile"}
+    follow:
+      - select: {css: "a.tile-link::attr(href)"}
+        scope: each
+        page_type: product
+        pass:
+          sku: {css: "::attr(data-sku)"}
+          price: [{css: ".price::text"}, {regex: '([\\d,.]+)'}, {replace: [",", ""]}]
+          category: {xpath: "//nav[@class='crumbs']//text()", absolute: true}
+          source: {var: origin}
+    """
+    ctx = PipeContext(url=URL, variables={"origin": "dairy", "sku": "inherited"})
+
+    result = _follow(page, Selector(text=LISTING), ctx)
+
+    assert [(r.url, r.variables) for r in result.requests] == [
+        (
+            "https://shop.example/p/a1",
+            {
+                "origin": "dairy",
+                "sku": "A1",
+                "price": "1234.50",
+                "category": "Dairy",
+                "source": "dairy",
+            },
+        ),
+        (
+            "https://shop.example/p/b2",
+            {
+                "origin": "dairy",
+                "sku": "B2",
+                "price": "4.00",
+                "category": "Dairy",
+                "source": "dairy",
+            },
+        ),
+    ]
+
+
+def test_post_json_template_renders_session_variables_and_passed_variables() -> None:
+    page = """
+    items:
+      each: {css: "div.tile"}
+    follow:
+      - select: {css: "a.tile-link::attr(href)"}
+        scope: each
+        as: href
+        page_type: product_api
+        pass:
+          sku: {css: "::attr(data-sku)"}
+        request:
+          method: POST
+          url: "https://shop.example/api/product"
+          headers: {X-CSRF-Token: "{{ session.csrf }}", X-Key: "{{ env.SHOP_KEY }}"}
+          json: {sku: "{{ sku }}", path: "{{ href }}", same: "{{ value }}", tags: ["{{ sku }}"]}
+    """
+    ctx = PipeContext(url=URL, session={"csrf": "tok"}, env={"SHOP_KEY": "k"})
+
+    first, second = _follow(page, Selector(text=LISTING), ctx).requests
+
+    assert first.method == "POST"
+    assert first.url == "https://shop.example/api/product"
+    assert first.headers == {
+        "X-CSRF-Token": "tok",
+        "X-Key": "k",
+        "Content-Type": "application/json",
+    }
+    assert first.body is not None
+    assert json.loads(first.body) == {"sku": "A1", "path": "/p/a1", "same": "/p/a1", "tags": ["A1"]}
+    assert first.variables == {"sku": "A1"}
+    assert json.loads(second.body or "")["sku"] == "B2"
+
+
+def test_form_and_raw_body_templates() -> None:
+    page = """
+    response: json
+    follow:
+      - select: {jsonpath: "$.next"}
+        page_type: listing
+        request: {method: POST, form: {page: "{{ value }}"}}
+      - select: {jsonpath: "$.next"}
+        page_type: listing
+        request: {method: POST, url: "/search", body: "page={{ value }}"}
+    """
+
+    form, raw = _follow(page, {"next": "2"}).requests
+
+    assert (form.url, form.body) == ("https://shop.example/c/2", "page=2")
+    assert form.headers == {"Content-Type": "application/x-www-form-urlencoded"}
+    assert (raw.url, raw.body, raw.headers) == ("https://shop.example/search", "page=2", {})
+
+
+def test_rendering_error_is_traced_and_other_rules_still_follow() -> None:
+    page = """
+    follow:
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+        request: {url: "{{ missing }}"}
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+    """
+
+    result = _follow(page, Selector(text=LISTING))
+
+    assert [r.url for r in result.requests] == ["https://shop.example/c/dairy?page=2"]
+    [error] = [t for t in result.trace if t.error]
+    assert (error.rule, error.path) == (0, "request")
+    assert error.error is not None and "missing" in error.error
+
+
+def test_select_without_match_issues_no_request_and_traces_steps() -> None:
+    result = _follow(
+        "follow: [{select: {css: 'a.prev::attr(href)'}, page_type: listing}]",
+        Selector(text=LISTING),
+    )
+
+    assert result.requests == []
+    [select] = [t for t in result.trace if t.path == "select"]
+    assert select.rule == 0 and select.steps[0].output == []
+
+
+def test_pass_without_match_passes_null() -> None:
+    page = """
+    follow:
+      - select: {css: "a.next::attr(href)"}
+        page_type: listing
+        pass: {sku: {css: "::attr(data-missing)"}}
+    """
+
+    result = _follow(page, Selector(text=LISTING))
+
+    assert result.requests[0].variables == {"sku": None}
+    [entry] = [t for t in result.trace if t.path == "pass.sku"]
+    assert entry.error is None
