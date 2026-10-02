@@ -159,6 +159,16 @@ runs/<site>/<run_id>/
   values appearing in sensitive HTTP headers or containing a copy of a sensitive Variable.
   Metadata includes chain Variables, request
   bindings and the Session Variables present when the request was created.
+  Scalar copies (including custom values serialized as strings) are compared by their
+  string representation, including zero and false; public Variables retain their types.
+  Known sensitive values are also masked
+  in request/response URL paths, query names/values and fragments after percent-decoding.
+  Query values are checked with both literal and form-encoded `+` semantics, including
+  unescaped secrets spanning query or URL component delimiters. Original encoding
+  outside masked spans is preserved. URL userinfo is always masked.
+  The same policy applies to URL-bearing headers (`Location`,
+  `Content-Location`, `Referer`); other headers mask copies of known secrets too.
+  Redaction builds metadata copies; requests, responses and extraction keep their values.
 - `run.json` contains the effective config (including defaults and `--record`), with
   `config_hash` equal to SHA-256 of its UTF-8 JSON with sorted keys and compact separators.
   The hash covers the redacted snapshot; it does not identify changes to secrets.
@@ -181,6 +191,16 @@ runs/<site>/<run_id>/
 
 ## Replay
 - Fingerprint = method + canonical URL + body, minus `replay.ignore_params` (query and JSON/form body keys).
+- Each Capture stores `request.fingerprint`, computed from the original request before
+  metadata redaction: `scrapy-sha1-v1:<40 hex characters>`. It uses Scrapy's default
+  fingerprint (headers and URL fragments excluded), after removing the source Run's
+  ignored query parameters and top-level JSON/form body keys. With a nonempty ignore
+  policy, JSON objects use sorted keys and compact UTF-8 JSON; forms use sorted pairs
+  with blank values preserved. Other bodies remain byte-for-byte inputs to the hash.
+- Replay must compare this stored identity using the source Run's ignore policy, even
+  with an edited extraction config. Redacted URLs are display metadata, never matching
+  inputs. Legacy Captures without a fingerprint may be indexed from an original URL;
+  a redacted legacy URL cannot safely reconstruct a fingerprint and must be rejected.
 - Replay serves responses from a prior Run's Captures; unmatched requests are recorded as `missing`, never fetched.
 - Replay produces a **new** Run (optionally with an edited config).
 
