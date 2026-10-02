@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from groceries_scraper.adapter.settings import scrapy_settings
+from groceries_scraper.adapter.settings import RECORD_LIMIT, scrapy_settings
 from groceries_scraper.config import Site, parse_site
 from groceries_scraper.run import Run
 
@@ -43,4 +43,5 @@ def test_a_site_can_opt_out_of_robots_txt() -> None:
 
 def test_limit_closes_the_spider_after_n_records() -> None:
     assert "CLOSESPIDER_ITEMCOUNT" not in scrapy_settings(_site(), RUN)
-    assert scrapy_settings(_site(), RUN, limit=3)["CLOSESPIDER_ITEMCOUNT"] == 3
+    settings = scrapy_settings(_site(), RUN, limit=3)
+    assert settings["CLOSESPIDER_ITEMCOUNT"] == settings[RECORD_LIMIT] == 3

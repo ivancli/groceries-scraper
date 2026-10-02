@@ -2,14 +2,15 @@
 
 import itertools
 import os
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import scrapy
 from scrapy.http import Response
 
-from groceries_scraper.adapter.pipelines import RecordItem
+from groceries_scraper.adapter.pipelines import EmittedRecord
 from groceries_scraper.config import Site
+from groceries_scraper.engine.follow import FollowRequest
 from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
 
@@ -17,37 +18,31 @@ from groceries_scraper.engine.pipe import PipeContext
 class SiteSpider(scrapy.Spider):
     name = "site"  # replaced by the Site's name
 
-    def __init__(self, site: Site, env: Mapping[str, str] | None = None, **kwargs: Any) -> None:
+    def __init__(self, site: Site, **kwargs: Any) -> None:
         super().__init__(name=site.site, **kwargs)
         self.site = site
-        self.env = dict(os.environ) if env is None else env
+        self.env = dict(os.environ)
         self._capture_nos = itertools.count(1)
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
         for start in self.site.start:
-            yield self._request(start.url, start.page_type, {})
+            yield self._request(
+                FollowRequest("GET", start.url, {}, None, start.page_type, {}, None)
+            )
 
-    def _request(
-        self,
-        url: str,
-        page_type: str,
-        variables: dict[str, Any],
-        method: str = "GET",
-        headers: dict[str, str] | None = None,
-        body: str | None = None,
-    ) -> scrapy.Request:
+    def _request(self, follow: FollowRequest) -> scrapy.Request:
         return scrapy.Request(
-            url,
-            method=method,
-            headers=headers,
-            body=body,
+            follow.url,
+            method=follow.method,
+            headers=follow.headers,
+            body=follow.body,
             callback=self._on_response,
-            cb_kwargs={"page_type": page_type, "variables": variables},
+            cb_kwargs={"page_type": follow.page_type, "variables": follow.variables},
         )
 
     def _on_response(
         self, response: Response, page_type: str, variables: dict[str, Any]
-    ) -> Iterator[RecordItem | scrapy.Request]:
+    ) -> Iterator[EmittedRecord | scrapy.Request]:
         capture_no = next(self._capture_nos)
         content_type = response.headers.get("Content-Type")
         result = evaluate_response(
@@ -58,13 +53,6 @@ class SiteSpider(scrapy.Spider):
             parent_ref=capture_no,
         )
         for record in result.extraction.records:
-            yield RecordItem(record, response.url, capture_no)
+            yield EmittedRecord(record, response.url, capture_no)
         for follow in result.follow.requests:
-            yield self._request(
-                follow.url,
-                follow.page_type,
-                follow.variables,
-                follow.method,
-                follow.headers,
-                follow.body,
-            )
+            yield self._request(follow)
