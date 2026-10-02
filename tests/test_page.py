@@ -2,7 +2,7 @@ import yaml
 from parsel import Selector
 
 from groceries_scraper.config.models import PageType
-from groceries_scraper.engine.page import evaluate_page
+from groceries_scraper.engine.page import evaluate_page, evaluate_response
 from groceries_scraper.engine.pipe import PipeContext, StepTrace
 
 LISTING = """
@@ -50,3 +50,30 @@ def test_page_without_loop_has_no_loop_trace() -> None:
 
     assert result.loop is None
     assert len(result.extraction.records) == 1
+
+
+def test_response_body_is_parsed_as_the_page_types_response_kind() -> None:
+    page = _page("record: product\nresponse: json\nfields: {name: {jsonpath: $.name}}")
+
+    result = evaluate_response(
+        page, b'{"name": "Milk"}', "text/html", PipeContext(url="https://x.example/")
+    )
+
+    assert result.extraction.records[0].data == {"name": "Milk"}
+
+
+def test_html_body_is_decoded_with_the_content_type_charset() -> None:
+    page = _page("record: product\nfields: {name: {css: 'h1::text'}}")
+    body = "<h1>Crème</h1>".encode("latin-1")
+
+    result = evaluate_response(page, body, "text/html; charset=ISO-8859-1", PipeContext())
+
+    assert result.extraction.records[0].data == {"name": "Crème"}
+
+
+def test_html_body_without_a_charset_is_utf8() -> None:
+    page = _page("record: product\nfields: {name: {css: 'h1::text'}}")
+
+    result = evaluate_response(page, "<h1>Crème</h1>".encode(), None, PipeContext())
+
+    assert result.extraction.records[0].data == {"name": "Crème"}

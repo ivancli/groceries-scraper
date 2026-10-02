@@ -3,7 +3,10 @@ from typing import Annotated, NoReturn
 
 import typer
 
-from groceries_scraper.config import ConfigError, load_checked_site
+from groceries_scraper.config import ConfigError, Site, load_checked_site
+from groceries_scraper.run import create_run
+
+RUNS_DIR = Path("runs")
 
 app = typer.Typer(no_args_is_help=True, help="Config-driven groceries scraper.")
 fixture_app = typer.Typer(no_args_is_help=True, help="Manage Golden Fixtures.")
@@ -18,14 +21,19 @@ def _not_implemented(command: str) -> NoReturn:
 @app.command()
 def validate(site_config: Path) -> None:
     """Validate a Site config."""
+    _load(site_config)
+    typer.echo(f"{site_config} is valid")
+
+
+def _load(site_config: Path) -> Site:
     try:
-        _, findings = load_checked_site(site_config)
+        site, findings = load_checked_site(site_config)
     except ConfigError as exc:
         _warn(exc.findings.warnings)
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
     _warn(findings.warnings)
-    typer.echo(f"{site_config} is valid")
+    return site
 
 
 def _warn(warnings: list[str]) -> None:
@@ -36,11 +44,16 @@ def _warn(warnings: list[str]) -> None:
 @app.command()
 def run(
     site_config: Path,
-    limit: int | None = None,
+    limit: Annotated[int | None, typer.Option(min=1, help="Stop after N Records.")] = None,
     record: Annotated[str | None, typer.Option(help="all | errors | off")] = None,
 ) -> None:
     """Run a Site."""
-    _not_implemented("run")
+    from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
+
+    site = _load(site_config)
+    new_run = create_run(RUNS_DIR, site.site)
+    typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
+    crawl(site, new_run, limit)
 
 
 @app.command()
