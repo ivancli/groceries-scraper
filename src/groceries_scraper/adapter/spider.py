@@ -1,8 +1,8 @@
 """One generic spider: every response goes through the engine; Follow Requests go back out."""
 
-import itertools
 import os
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import asdict, replace
 from typing import Any, NoReturn
 
 import scrapy
@@ -10,8 +10,15 @@ from scrapy.exceptions import CloseSpider
 from scrapy.http import Response
 from twisted.python.failure import Failure
 
-from groceries_scraper.adapter.middlewares import REFRESH_ON
+from groceries_scraper.adapter.middlewares import (
+    CAPTURE,
+    PAGE_TYPE,
+    PARENT_CAPTURE,
+    REFRESH_ON,
+    VARIABLES,
+)
 from groceries_scraper.adapter.pipelines import EmittedRecord
+from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.config import Site
 from groceries_scraper.config.models import Session
 from groceries_scraper.engine.follow import FollowRequest
@@ -19,6 +26,7 @@ from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
 from groceries_scraper.engine.request import RenderedRequest, RequestSource
 from groceries_scraper.engine.session import RefreshAction, SessionRefresh, evaluate_setup
+from groceries_scraper.run.recording import Capture, RunRecorder
 
 # Close reason and stats key for Run Health.
 SESSION_SETUP_FAILED = "session_setup_failed"
@@ -48,7 +56,6 @@ class SiteSpider(scrapy.Spider):
         super().__init__(name=site.site, **kwargs)
         self.site = site
         self.env = dict(os.environ)
-        self._capture_nos = itertools.count(1)
         # No Session: no Setup steps, and a refresh policy that never triggers.
         session = site.session or Session(setup=[])
         self._setup_steps = session.setup
@@ -72,11 +79,23 @@ class SiteSpider(scrapy.Spider):
 
     def _request(self, follow: FollowRequest, retry: bool = False) -> scrapy.Request:
         refresh_on = sorted(self._refresh.refresh_on)
+        source = follow.source
+        variables = {
+            **follow.variables,
+            **(dict(source.bindings) if source is not None else {}),
+            "session": dict(source.ctx.session if source is not None else self._session),
+        }
         return _scrapy_request(
             follow.request,
             callback=self._on_response,
             cb_kwargs={"follow": follow, "generation": self._refresh.generation},
-            meta={"handle_httpstatus_list": refresh_on, REFRESH_ON: refresh_on},
+            meta={
+                "handle_httpstatus_list": refresh_on,
+                REFRESH_ON: refresh_on,
+                PAGE_TYPE: follow.page_type,
+                VARIABLES: variables,
+                PARENT_CAPTURE: follow.parent_ref,
+            },
             dont_filter=retry,  # the dupe filter saw the original
         )
 
@@ -87,15 +106,33 @@ class SiteSpider(scrapy.Spider):
         if action is not RefreshAction.PROCEED:
             yield from self._on_refresh_status(action, response, follow)
             return
-        capture_no = next(self._capture_nos)
-        result = evaluate_response(
-            self.site.page_types[follow.page_type],
-            response.body,
-            _content_type(response),
-            PipeContext(
-                variables=follow.variables, session=self._session, env=self.env, url=response.url
-            ),
-            parent_ref=capture_no,
+        capture: Capture = response.meta[CAPTURE]
+        capture_no = capture.capture_no
+        try:
+            result = evaluate_response(
+                self.site.page_types[follow.page_type],
+                response.body,
+                _content_type(response),
+                PipeContext(
+                    variables=follow.variables,
+                    session=self._session,
+                    env=self.env,
+                    url=response.url,
+                ),
+                parent_ref=capture_no,
+            )
+        except ValueError as exc:
+            self._recorder.record(capture, {"error": f"{type(exc).__name__}: {exc}"})
+            self.logger.error("Extraction failed for %s: %s", response.url, exc)
+            return
+        self._recorder.record(
+            capture,
+            {
+                "loop": [asdict(step) for step in result.loop] if result.loop is not None else None,
+                "fields": [asdict(entry) for entry in result.extraction.trace],
+                "dropped": [asdict(entry) for entry in result.extraction.dropped],
+                "follow": [asdict(entry) for entry in result.follow.trace],
+            },
         )
         for record in result.extraction.records:
             yield EmittedRecord(record, response.url, capture_no)
@@ -106,11 +143,13 @@ class SiteSpider(scrapy.Spider):
         self, action: RefreshAction, response: Response, follow: FollowRequest
     ) -> Iterator[scrapy.Request]:
         url = follow.request.url
+        capture: Capture = response.meta[CAPTURE]
+        follow = replace(follow, parent_ref=capture.capture_no)
         if action is RefreshAction.REFRESH:
             self.logger.info("HTTP %d from %s: refreshing the Session", response.status, url)
             self._inc_stat("session/refreshes")
             self._retries.append(follow)
-            yield self._setup(0, {})
+            yield self._setup(0, {}, parent=capture.capture_no)
         elif action is RefreshAction.WAIT:
             self._retries.append(follow)
         elif action is RefreshAction.RETRY:
@@ -126,7 +165,9 @@ class SiteSpider(scrapy.Spider):
 
     # --- Session Setup -------------------------------------------------------
 
-    def _setup(self, index: int, session: dict[str, Any]) -> scrapy.Request:
+    def _setup(
+        self, index: int, session: dict[str, Any], parent: int | None = None
+    ) -> scrapy.Request:
         # Each step sees only the Session Variables extracted before it.
         ctx = PipeContext(session=session, env=self.env)
         try:
@@ -138,7 +179,12 @@ class SiteSpider(scrapy.Spider):
             callback=self._on_setup,
             errback=self._on_setup_error,
             cb_kwargs={"index": index, "session": session},
-            meta={"handle_httpstatus_list": _ERROR_STATUSES},  # 3xx still redirect
+            meta={
+                "handle_httpstatus_list": _ERROR_STATUSES,  # 3xx still redirect
+                PAGE_TYPE: "session_setup",
+                PARENT_CAPTURE: parent,
+                VARIABLES: {"session": dict(session)},
+            },
             dont_filter=True,  # Setup re-runs on every refresh
         )
 
@@ -152,11 +198,15 @@ class SiteSpider(scrapy.Spider):
             _content_type(response),
             PipeContext(session=session, env=self.env, url=response.url),
         )
+        capture: Capture = response.meta[CAPTURE]
+        self._recorder.record(
+            capture, {"fields": [asdict(entry) for entry in result.trace], "error": result.error}
+        )
         if result.error is not None:
             self._setup_failed(index, result.error)
         session = {**session, **result.session}
         if index + 1 < len(self._setup_steps):
-            yield self._setup(index + 1, session)
+            yield self._setup(index + 1, session, parent=capture.capture_no)
             return
         self._session = session
         self._refresh.refreshed()
@@ -179,3 +229,8 @@ class SiteSpider(scrapy.Spider):
     def _inc_stat(self, key: str) -> None:
         assert self.crawler.stats is not None
         self.crawler.stats.inc_value(key)
+
+    @property
+    def _recorder(self) -> RunRecorder:
+        recorder: RunRecorder = self.crawler.settings[RECORDER]
+        return recorder

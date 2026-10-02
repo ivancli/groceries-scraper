@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 
 from groceries_scraper.config.models import SetupStep
+from groceries_scraper.engine.extract import FieldTrace
 from groceries_scraper.engine.page import parse_scope
 from groceries_scraper.engine.pipe import PipeContext, plain, run_pipe
 
@@ -14,6 +15,7 @@ from groceries_scraper.engine.pipe import PipeContext, plain, run_pipe
 class SetupResult:
     session: dict[str, Any] = field(default_factory=dict)  # empty when `error` is set
     error: str | None = None
+    trace: list[FieldTrace] = field(default_factory=list)
 
 
 def evaluate_setup(
@@ -28,14 +30,16 @@ def evaluate_setup(
     except ValueError as exc:
         return SetupResult(error=f"Session Setup response is not JSON: {exc}")
     session = {}
+    trace = []
     for name, pipe in step.extract.items():
         values, steps = run_pipe(pipe, scope, ctx)
+        trace.append(FieldTrace(f"session.{name}", 0, steps))
         if not values:
             # Later templates would fail on every request; stop the Run here instead.
             cause = next((f": {s.error}" for s in steps if s.error), "")
-            return SetupResult(error=f"Session Variable `{name}` has no value{cause}")
+            return SetupResult(error=f"Session Variable `{name}` has no value{cause}", trace=trace)
         session[name] = plain(values[0])
-    return SetupResult(session)
+    return SetupResult(session, trace=trace)
 
 
 class RefreshAction(Enum):

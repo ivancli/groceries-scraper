@@ -31,6 +31,7 @@ settings:                      # allowlisted overrides of defaults.yaml
   concurrent_requests_per_domain: 2
   obey_robots: true            # default true; override deliberately
   record_level: all            # all | errors | off
+  redact_headers: [X-CSRF-Token, X-Key]  # in addition to the built-in sensitive headers
 
 session:                       # Session Setup — runs before Start Requests
   setup:
@@ -151,6 +152,32 @@ runs/<site>/<run_id>/
 
 - Redacted by default: `Cookie`, `Set-Cookie`, `Authorization`, plus Site-configured headers.
 - `record_level: errors` keeps only non-2xx or extraction-error Captures.
+  Use `record_level: "off"` with quotes: YAML treats an unquoted `off` as a boolean.
+- `settings.redact_headers` adds case-insensitive header names to redact in request/response
+  metadata and Request Templates in the config snapshot. Values become `[REDACTED]`.
+  Variables referenced by sensitive header templates are also redacted, as are Variable
+  values appearing in sensitive HTTP headers or containing a copy of a sensitive Variable.
+  Metadata includes chain Variables, request
+  bindings and the Session Variables present when the request was created.
+- `run.json` contains the effective config (including defaults and `--record`), with
+  `config_hash` equal to SHA-256 of its UTF-8 JSON with sorted keys and compact separators.
+  The hash covers the redacted snapshot; it does not identify changes to secrets.
+  The snapshot uses normalized Pipes (`<pipe>` in Fields); unchanged model defaults are
+  omitted and restored by the config loader.
+- Capture numbers are assigned in response order, including Session Setup, redirects and
+  retries. `parent_capture_no` links Follow Requests and successive HTTP attempts. Scrapy's
+  internal robots.txt request has no Page Type and is excluded. `errors` mode can leave gaps
+  and parents referring to successful Captures that were not kept; `off` writes no Captures
+  or Traces, but still writes `run.json` and Records with capture numbers.
+- Request `body` is base64 with `body_encoding: base64`, preserving bytes exactly. The `.body`
+  file preserves response bytes before HTTP decompression. Header values are lists, preserving
+  repeated headers. Response `timing` includes UTC `started_at` / `finished_at` and monotonic
+  `elapsed_seconds` for the download.
+- Traces contain `capture_no`, `page_type`, the page `loop`, `fields`, `follow` and `dropped`
+  entries from the engine. Session Setup uses the `session_setup` filename and traces its
+  Variable extraction. Exchanges consumed by redirects/retries have only the Capture link;
+  response parsing failures have a top-level `error`.
+  Values from custom Steps that JSON cannot encode (such as Decimal) are stored as strings.
 
 ## Replay
 - Fingerprint = method + canonical URL + body, minus `replay.ignore_params` (query and JSON/form body keys).

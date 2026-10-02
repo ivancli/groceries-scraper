@@ -50,9 +50,13 @@ def run(
     """Run a Site."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
-    if record is not None:
-        _not_implemented("run --record")
+    if record not in (None, "all", "errors", "off"):
+        raise typer.BadParameter("must be all, errors or off", param_hint="--record")
     site = _load_site_or_exit(site_config)
+    if record is not None:
+        site = site.model_copy(
+            update={"settings": site.settings.model_copy(update={"record_level": record})}
+        )
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
     crawl(site, new_run, limit)
