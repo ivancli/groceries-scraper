@@ -1,9 +1,9 @@
 """Follow Rules: turn one response into Follow Requests — descriptions only, never I/O."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlencode, urljoin
 
 from groceries_scraper.config.models import FollowRule, PageType, RequestTemplate
@@ -26,6 +26,25 @@ class FollowRequest:
     page_type: str
     variables: dict[str, Any]
     parent_ref: int | None  # the Capture this request was discovered in
+    # What `rerender` needs; None for requests with nothing to render (Start Requests).
+    source: "RequestSource | None" = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class RequestSource:
+    template: RequestTemplate
+    value: Any
+    ctx: PipeContext
+    names: Mapping[str, Any]
+
+
+def rerender(request: FollowRequest, session: Mapping[str, Any]) -> FollowRequest:
+    """The same request rendered with new Session Variables, e.g. after a Session refresh."""
+    if request.source is None:
+        return request
+    source = replace(request.source, ctx=replace(request.source.ctx, session=session))
+    rendered = render_request(source.template, source.value, source.ctx, source.names)
+    return replace(request, **rendered._asdict(), source=source)
 
 
 @dataclass(frozen=True)
@@ -90,37 +109,12 @@ class _RuleEvaluator:
     def _request(self, value: Any, child_ctx: PipeContext) -> FollowRequest:
         template = self.rule.request or RequestTemplate()
         names = {self.rule.as_: value} if self.rule.as_ else {}
-
-        def fill(source: str) -> str:
-            return render(source, value, child_ctx, names)
-
-        def fill_native(source: str) -> Any:
-            return render_native(source, value, child_ctx, names)
-
-        if template.url is not None:
-            url = fill(template.url)
-        elif isinstance(value, str):
-            url = value
-        else:
-            raise ValueError(f"selected value is not a URL: {value!r}")
-        headers = {name: fill(v) for name, v in template.headers.items()}
-        body = None
-        if template.json_body is not None:
-            body = json.dumps(_render_json(template.json_body, fill_native))
-            _default_content_type(headers, "application/json")
-        elif template.form is not None:
-            body = urlencode({name: fill(v) for name, v in template.form.items()})
-            _default_content_type(headers, "application/x-www-form-urlencoded")
-        elif template.body is not None:
-            body = fill(template.body)
         return FollowRequest(
-            method=template.method,
-            url=urljoin(self.ctx.url or "", url),
-            headers=headers,
-            body=body,
+            *render_request(template, value, child_ctx, names),
             page_type=self.rule.page_type,
             variables=dict(child_ctx.variables),
             parent_ref=self.parent_ref,
+            source=RequestSource(template, value, child_ctx, names),
         )
 
     def _run(self, path: str, pipe: list[Any], scope: Any, node: int | None) -> list[Any]:
@@ -132,6 +126,46 @@ class _RuleEvaluator:
         self, path: str, steps: list[StepTrace], node: int | None, error: str | None = None
     ) -> None:
         self.result.trace.append(FollowTrace(self.index, path, steps, error, node))
+
+
+class RenderedRequest(NamedTuple):
+    method: str
+    url: str
+    headers: dict[str, str]
+    body: str | None
+
+
+def render_request(
+    template: RequestTemplate,
+    value: Any,
+    ctx: PipeContext,
+    names: Mapping[str, Any] | None = None,
+) -> RenderedRequest:
+    """No template `url:` means `value` is the URL; relative URLs resolve against `ctx.url`."""
+
+    def fill(source: str) -> str:
+        return render(source, value, ctx, names)
+
+    def fill_native(source: str) -> Any:
+        return render_native(source, value, ctx, names)
+
+    if template.url is not None:
+        url = fill(template.url)
+    elif isinstance(value, str):
+        url = value
+    else:
+        raise ValueError(f"selected value is not a URL: {value!r}")
+    headers = {name: fill(v) for name, v in template.headers.items()}
+    body = None
+    if template.json_body is not None:
+        body = json.dumps(_render_json(template.json_body, fill_native))
+        _default_content_type(headers, "application/json")
+    elif template.form is not None:
+        body = urlencode({name: fill(v) for name, v in template.form.items()})
+        _default_content_type(headers, "application/x-www-form-urlencoded")
+    elif template.body is not None:
+        body = fill(template.body)
+    return RenderedRequest(template.method, urljoin(ctx.url or "", url), headers, body)
 
 
 def _render_json(value: Any, fill: Callable[[str], Any]) -> Any:

@@ -134,8 +134,9 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 
 ### Session (v1)
 - One Session per Site Run; cookies via Scrapy cookie middleware.
-- On a status in `refresh_on`: re-run Session Setup, retry the request, up to `max_refresh` per Run.
-- Session Setup failure → Run Health `failed`.
+- Setup steps run in order before Start Requests; each sees the Session Variables extracted before it. A step's response is read as JSON if its content type says so, else HTML.
+- On a status in `refresh_on`: re-run Session Setup, retry the request (its Request Template re-rendered with the new Session Variables), up to `max_refresh` per Run. Requests failing meanwhile wait for the refresh rather than starting another. Past the limit, such requests are dropped and counted (`session/refresh_exhausted`).
+- Session Setup failure (non-2xx, network error, or an `extract` with no value) → Run closes with reason `session_setup_failed` → Run Health `failed`.
 
 ## Run directory
 

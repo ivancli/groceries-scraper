@@ -1,11 +1,12 @@
 import json
+from dataclasses import replace
 from typing import Any
 
 import yaml
 from parsel import Selector
 
 from groceries_scraper.config.models import PageType
-from groceries_scraper.engine.follow import FollowRequest, FollowResult
+from groceries_scraper.engine.follow import FollowRequest, FollowResult, rerender
 from groceries_scraper.engine.page import evaluate_page
 from groceries_scraper.engine.pipe import PipeContext
 
@@ -104,6 +105,34 @@ def test_each_scope_passes_per_tile_variables_to_the_matching_child_request() ->
             },
         ),
     ]
+
+
+def test_rerender_uses_new_session_variables_and_keeps_the_rest() -> None:
+    page = """
+    follow:
+      - select: {css: "a.tile-link::attr(href)"}
+        as: href
+        page_type: product
+        pass:
+          sku: {css: "div.tile::attr(data-sku)"}
+        request:
+          method: POST
+          url: "/api/product?sku={{ sku }}"
+          headers: {X-CSRF-Token: "{{ session.csrf }}"}
+          json: {path: "{{ href }}"}
+    """
+    ctx = PipeContext(url=URL, session={"csrf": "old"})
+    original = _follow(page, Selector(text=LISTING), ctx).requests[0]
+
+    retried = rerender(original, {"csrf": "new"})
+
+    assert retried == replace(original, headers={**original.headers, "X-CSRF-Token": "new"})
+
+
+def test_rerender_leaves_a_request_without_a_template_unchanged() -> None:
+    start = FollowRequest("GET", URL, {}, None, "listing", {}, None)
+
+    assert rerender(start, {"csrf": "new"}) == start
 
 
 def test_post_json_template_renders_session_variables_and_passed_variables() -> None:
