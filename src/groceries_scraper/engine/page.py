@@ -1,7 +1,12 @@
 """One response through a Page Type: the Loop runs once, shared by extraction and Follow Rules."""
 
+import codecs
+import json
+import re
 from dataclasses import dataclass
 from typing import Any
+
+from parsel import Selector
 
 from groceries_scraper.config.models import PageType
 from groceries_scraper.engine.extract import ExtractionResult, extract
@@ -16,6 +21,17 @@ class PageResult:
     follow: FollowResult
 
 
+def evaluate_response(
+    page_type: PageType,
+    body: bytes,
+    content_type: str | None,
+    ctx: PipeContext,
+    parent_ref: int | None = None,
+) -> PageResult:
+    """The Page Type's `response:` decides the Scope; the content type only supplies a charset."""
+    return evaluate_page(page_type, _scope(page_type, body, content_type), ctx, parent_ref)
+
+
 def evaluate_page(
     page_type: PageType, scope: Any, ctx: PipeContext, parent_ref: int | None = None
 ) -> PageResult:
@@ -27,3 +43,22 @@ def evaluate_page(
         extract(page_type, nodes, ctx),
         follow(page_type, scope, nodes, ctx, parent_ref),
     )
+
+
+_CHARSET = re.compile(r"charset=[\"']?([\w.:-]+)", re.I)
+
+
+def _scope(page_type: PageType, body: bytes, content_type: str | None) -> Any:
+    if page_type.response == "json":
+        return json.loads(body)  # detects UTF-8/16/32 itself
+    return Selector(text=body.decode(_charset(content_type), errors="replace"))
+
+
+def _charset(content_type: str | None) -> str:
+    match = _CHARSET.search(content_type or "")
+    if match:
+        try:
+            return codecs.lookup(match.group(1)).name
+        except LookupError:
+            pass
+    return "utf-8"

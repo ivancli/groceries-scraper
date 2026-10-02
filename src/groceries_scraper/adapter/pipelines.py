@@ -1,0 +1,62 @@
+"""Writes Records to `records/<record_type>.jsonl` in the Run directory."""
+
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import IO, Self
+
+from scrapy.crawler import Crawler
+from scrapy.exceptions import DropItem
+
+from groceries_scraper.adapter.settings import RUN
+from groceries_scraper.engine.extract import Record
+from groceries_scraper.run import Run
+
+
+@dataclass(frozen=True)
+class RecordItem:
+    record: Record
+    source_url: str
+    capture_no: int
+
+
+class RecordPipeline:
+    def __init__(self, run: Run, limit: int) -> None:
+        self.run = run
+        self.limit = limit  # 0: no limit
+        self.written = 0
+        self._files: dict[str, IO[str]] = {}
+
+    @classmethod
+    def from_crawler(cls, crawler: Crawler) -> Self:
+        return cls(crawler.settings[RUN], crawler.settings.getint("CLOSESPIDER_ITEMCOUNT"))
+
+    def process_item(self, item: object) -> object:
+        if not isinstance(item, RecordItem):
+            return item
+        if self.limit and self.written >= self.limit:
+            raise DropItem("Record limit reached")
+        record = item.record
+        meta = {
+            "site": self.run.site,
+            "run_id": self.run.run_id,
+            "record_type": record.record_type,
+            "scraped_at": datetime.now(UTC).isoformat(),
+            "source_url": item.source_url,
+            "capture_no": item.capture_no,
+        }
+        line = json.dumps({**record.data, "_meta": meta}, ensure_ascii=False)
+        self._file(record.record_type).write(line + "\n")
+        self.written += 1
+        return item
+
+    def _file(self, record_type: str) -> IO[str]:
+        if record_type not in self._files:
+            path = self.run.path / "records" / f"{record_type}.jsonl"
+            path.parent.mkdir(exist_ok=True)
+            self._files[record_type] = path.open("a", encoding="utf-8")
+        return self._files[record_type]
+
+    def close_spider(self) -> None:
+        for file in self._files.values():
+            file.close()
