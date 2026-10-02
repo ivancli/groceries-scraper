@@ -6,20 +6,23 @@ import yaml
 from pydantic import ValidationError
 
 from groceries_scraper.config.models import Site
-from groceries_scraper.config.semantics import check_site
+from groceries_scraper.config.semantics import Findings, check_site
 
 # src/groceries_scraper/config/loader.py -> repo root; the project runs from a checkout.
 DEFAULTS_PATH = Path(__file__).resolve().parents[3] / "defaults.yaml"
 
 
 class ConfigError(Exception):
-    """A Site config failed to load; `errors` are `"<yaml path>: <message>"` lines."""
+    """A Site config failed to load; `findings` holds its errors and any warnings."""
 
-    def __init__(self, source: str, errors: list[str], warnings: list[str] | None = None) -> None:
+    def __init__(self, source: str, findings: Findings) -> None:
         self.source = source
-        self.errors = errors
-        self.warnings = warnings or []
-        super().__init__("\n  ".join([f"invalid Site config {source}:", *errors]))
+        self.findings = findings
+        super().__init__("\n  ".join([f"invalid Site config {source}:", *findings.errors]))
+
+    @property
+    def errors(self) -> list[str]:
+        return self.findings.errors
 
 
 def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
@@ -27,13 +30,13 @@ def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
     return parse_site(_read_yaml(path), _read_yaml(defaults_path), source=str(path))
 
 
-def load_checked_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> tuple[Site, list[str]]:
+def load_checked_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> tuple[Site, Findings]:
     """`load_site` plus semantic checks: what every command runs first."""
     site = load_site(path, defaults_path)
     findings = check_site(site)
     if findings.errors:
-        raise ConfigError(str(path), findings.errors, findings.warnings)
-    return site, findings.warnings
+        raise ConfigError(str(path), findings)
+    return site, findings
 
 
 def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
@@ -44,16 +47,15 @@ def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
     try:
         return Site.model_validate(data)
     except ValidationError as exc:
-        raise ConfigError(
-            source, [f"{_yaml_path(e['loc'])}: {e['msg']}" for e in exc.errors()]
-        ) from None
+        errors = [f"{_yaml_path(e['loc'])}: {e['msg']}" for e in exc.errors()]
+        raise ConfigError(source, Findings(errors)) from None
 
 
 def _read_yaml(path: Path) -> Any:
     try:
         return yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError) as exc:
-        raise ConfigError(str(path), [str(exc)]) from None
+        raise ConfigError(str(path), Findings([str(exc)])) from None
 
 
 def _yaml_path(loc: tuple[int | str, ...]) -> str:

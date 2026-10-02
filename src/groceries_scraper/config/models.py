@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
@@ -93,6 +95,15 @@ class Step(_Model):
     @property
     def kind(self) -> str:
         return self._kinds()[0]
+
+
+def resolve_fn(ref: str) -> Callable[..., Any]:
+    """The callable an `fn:` Step names; shared so validation fails exactly when a Run would."""
+    module, _, name = ref.partition(":")
+    fn = getattr(importlib.import_module(module), name)
+    if not callable(fn):
+        raise TypeError(f"`{ref}` is not callable")
+    return fn  # type: ignore[no-any-return]
 
 
 def _as_list(value: Step | list[Step]) -> list[Step]:
@@ -204,10 +215,14 @@ class FollowRule(_Model):
     pass_: dict[str, Pipe] = Field(default_factory=dict, alias="pass")
     request: RequestTemplate | None = None
 
+    @property
+    def template_names(self) -> frozenset[str]:
+        """Names this rule adds to its Request Template's scope."""
+        return frozenset([*self.pass_, *([self.as_] if self.as_ else [])])
+
     @model_validator(mode="after")
     def _names_not_reserved(self) -> FollowRule:
-        names = {*self.pass_, *([self.as_] if self.as_ else [])}
-        if reserved := sorted(names & set(TEMPLATE_NAMES)):
+        if reserved := sorted(self.template_names & set(TEMPLATE_NAMES)):
             raise _config_error(
                 f"`as` and `pass` cannot use reserved template names: {', '.join(reserved)}"
             )
@@ -262,7 +277,7 @@ class Replay(_Model):
 
 
 class RecordType(_Model):
-    key: Annotated[list[str], Field(min_length=1)]
+    key: list[str] = Field(default_factory=list)  # a Record Type has at most one Record Key
 
 
 Ratio = Annotated[float, Field(ge=0, le=1)]

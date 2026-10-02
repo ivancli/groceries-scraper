@@ -9,10 +9,13 @@ DEFAULTS = yaml.safe_load((Path(__file__).parents[1] / "defaults.yaml").read_tex
 
 
 def _check(page_types: dict[str, Any], **sections: Any) -> Findings:
+    # Declare every emitted Record Type unless a test is about `records:` itself.
+    emitted = {page["record"] for page in page_types.values() if page.get("record")}
     data = {
         "site": "s",
         "start": [{"url": "https://x.example/", "page_type": "listing"}],
         "page_types": page_types,
+        "records": dict.fromkeys(emitted, {}),
         **sections,
     }
     return check_site(parse_site(data, DEFAULTS))
@@ -89,6 +92,31 @@ def test_selector_after_a_text_step_is_an_error() -> None:
     assert errors == ["page_types.listing.fields.name[2]: css needs an HTML Scope, got text"]
 
 
+def test_selector_after_a_text_selecting_selector_is_an_error() -> None:
+    fields = {
+        "attr": [{"css": "a::attr(href)"}, {"css": "b"}],
+        "text": [{"css": "h1::text"}, {"xpath": "./b"}],
+        "xattr": [{"xpath": ".//a/@href"}, {"css": "b"}],
+        "xtext": [{"xpath": ".//h1/text()"}, {"css": "b"}],
+        "count": [{"xpath": "count(.//li)"}, {"css": "b"}],
+        "nodes": [{"css": "div.tile"}, {"xpath": ".//a[@href]"}, {"css": "b"}],
+        "union": [{"xpath": ".//a/@href | .//b"}, {"css": "b"}],  # unsure: never flagged
+    }
+
+    errors = _errors(_record_page("html", fields))
+
+    assert errors == [
+        f"page_types.listing.fields.{name}[1]: {kind} needs an HTML Scope, got text"
+        for name, kind in [
+            ("attr", "css"),
+            ("text", "xpath"),
+            ("xattr", "css"),
+            ("xtext", "css"),
+            ("count", "css"),
+        ]
+    ]
+
+
 def test_nested_fields_take_the_scope_of_their_loop() -> None:
     errors = _errors(
         _record_page(
@@ -143,6 +171,8 @@ def test_absolute_xpath_inside_a_loop_needs_absolute_true() -> None:
             {
                 "bad": {"xpath": "//h1/text()"},
                 "bad_grouped": {"xpath": "(/html//h1)[1]"},
+                "bad_union": {"xpath": ".//h1/text() | //h2[contains(., '|')]/text()"},
+                "relative_union": {"xpath": ".//h1/text() | .//h2[@x='|//']/text()"},
                 "relative": {"xpath": ".//h1/text()"},
                 "marked": {"xpath": "//h1/text()", "absolute": True},
             },
@@ -162,6 +192,8 @@ def test_absolute_xpath_inside_a_loop_needs_absolute_true() -> None:
         "page_types.listing.fields.bad: "
         "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`",
         "page_types.listing.fields.bad_grouped: "
+        "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`",
+        "page_types.listing.fields.bad_union: "
         "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`",
         "page_types.listing.follow[0].select: "
         "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`",
@@ -345,10 +377,12 @@ def test_fn_must_be_importable() -> None:
     errors = _errors(_record_page("html", fields))
 
     assert errors == [
-        "page_types.listing.fields.no_module: cannot import `no_such_pkg.mod`: "
-        "No module named 'no_such_pkg'",
-        "page_types.listing.fields.no_attr: `json` has no attribute `no_such_fn`",
-        "page_types.listing.fields.not_callable: `json:__name__` is not callable",
+        "page_types.listing.fields.no_module: cannot load `no_such_pkg.mod:parse`: "
+        "ModuleNotFoundError: No module named 'no_such_pkg'",
+        "page_types.listing.fields.no_attr: cannot load `json:no_such_fn`: "
+        "AttributeError: module 'json' has no attribute 'no_such_fn'",
+        "page_types.listing.fields.not_callable: cannot load `json:__name__`: "
+        "TypeError: `json:__name__` is not callable",
     ]
 
 
@@ -381,7 +415,25 @@ def test_record_type_must_be_emitted_by_some_page_type() -> None:
         _emitting("sku"), records={"product": {"key": ["sku"]}, "promo": {"key": ["id"]}}
     )
 
-    assert errors == ["records.promo: no Page Type emits Record Type `promo`"]
+    assert errors == ["records.promo: no reachable Page Type emits Record Type `promo`"]
+
+
+def test_record_type_emitted_only_by_unreachable_page_types_is_an_error() -> None:
+    page_types = {**_emitting("sku"), "orphan": {"record": "promo", "fields": {"id": {"css": "b"}}}}
+
+    errors = _errors(page_types, records={"product": {}, "promo": {}})
+
+    assert errors == ["records.promo: no reachable Page Type emits Record Type `promo`"]
+
+
+def test_emitted_record_type_must_be_declared() -> None:
+    errors = _errors(_emitting("sku"), records={"produt": {}})
+
+    assert errors == [
+        "records.produt: no reachable Page Type emits Record Type `produt`",
+        "page_types.pdp.record: Record Type `product` is not declared in `records:`",
+        "page_types.api.record: Record Type `product` is not declared in `records:`",
+    ]
 
 
 def test_record_key_field_must_exist_on_every_emitting_page_type() -> None:
@@ -399,6 +451,6 @@ def test_health_checks_must_name_known_record_types_and_fields() -> None:
     errors = _errors(_emitting("sku", "price"), health=health)
 
     assert errors == [
-        "health.min_records.promo: no Page Type emits Record Type `promo`",
+        "health.min_records.promo: no reachable Page Type emits Record Type `promo`",
         "health.max_null_ratio.prise: no Record-emitting Page Type has Field `prise`",
     ]

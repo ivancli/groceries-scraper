@@ -19,12 +19,12 @@ def _not_implemented(command: str) -> NoReturn:
 def validate(site_config: Path) -> None:
     """Validate a Site config."""
     try:
-        _, warnings = load_checked_site(site_config)
+        _, findings = load_checked_site(site_config)
     except ConfigError as exc:
-        _warn(exc.warnings)
+        _warn(exc.findings.warnings)
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
-    _warn(warnings)
+    _warn(findings.warnings)
     typer.echo(f"{site_config} is valid")
 
 

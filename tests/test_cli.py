@@ -52,7 +52,8 @@ def test_validate_exits_non_zero_on_a_semantic_error(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert result.stderr.splitlines()[1:] == [
         "  page_types.product_api.fields.unit_price[1]: "
-        "cannot import `mypkg.transforms`: No module named 'mypkg'"
+        "cannot load `mypkg.transforms:parse_unit_price`: "
+        "ModuleNotFoundError: No module named 'mypkg'"
     ]
 
 
