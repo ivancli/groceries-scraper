@@ -4,7 +4,7 @@ import codecs
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from parsel import Selector
 
@@ -29,7 +29,8 @@ def evaluate_response(
     parent_ref: int | None = None,
 ) -> PageResult:
     """The Page Type's `response:` decides the Scope; the content type only supplies a charset."""
-    return evaluate_page(page_type, _scope(page_type, body, content_type), ctx, parent_ref)
+    scope = parse_scope(page_type.response, body, content_type)
+    return evaluate_page(page_type, scope, ctx, parent_ref)
 
 
 def evaluate_page(
@@ -48,8 +49,8 @@ def evaluate_page(
 _CHARSET = re.compile(r"charset=[\"']?([\w.:-]+)", re.I)
 
 
-def _scope(page_type: PageType, body: bytes, content_type: str | None) -> Any:
-    if page_type.response == "json":
+def parse_scope(response: Literal["html", "json"], body: bytes, content_type: str | None) -> Any:
+    if response == "json":
         return json.loads(body)  # detects UTF-8/16/32 itself
     return Selector(text=body.decode(_charset(content_type), errors="replace"))
 
