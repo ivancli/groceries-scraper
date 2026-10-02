@@ -53,11 +53,14 @@ STEP_KINDS = (
 NO_ARG_KINDS = ("strip", "lower", "upper", "urljoin")
 
 
+ScopeKind = Literal["html", "json"]
+
+
 class Step(_Model):
     css: str | None = None
     xpath: str | None = None
     jsonpath: str | None = None
-    parse: Literal["json", "html"] | None = None
+    parse: ScopeKind | None = None
     var: str | None = None
     regex: str | None = None
     replace: tuple[str, str] | None = None
@@ -230,7 +233,7 @@ class FollowRule(_Model):
 
 
 class PageType(_Model):
-    response: Literal["html", "json"] = "html"
+    response: ScopeKind = "html"
     record: str | None = None
     items: Loop | None = None
     fields: dict[str, FieldSpec] = Field(default_factory=dict)

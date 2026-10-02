@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from scrapy.settings.default_settings import RETRY_HTTP_CODES
+
 from groceries_scraper.config import Site
 from groceries_scraper.run import Run
 
@@ -24,4 +26,8 @@ def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str,
     }
     if limit is not None:
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
+    if site.session is not None:
+        # Retrying would resend the stale Session; the spider refreshes it first.
+        refresh_on = set(site.session.refresh_on)
+        settings["RETRY_HTTP_CODES"] = [c for c in RETRY_HTTP_CODES if c not in refresh_on]
     return settings
