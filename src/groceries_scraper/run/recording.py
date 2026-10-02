@@ -11,8 +11,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config import Site
 from groceries_scraper.run.directory import Run
-
-REDACTED = "[REDACTED]"
+from groceries_scraper.run.redaction import REDACTED, MetadataRedactor
 
 
 @dataclass(frozen=True)
@@ -27,6 +26,7 @@ class RunRecorder:
     def __init__(self, run: Run, site: Site) -> None:
         self.run = run
         self.level = site.settings.record_level
+        self.ignore_params = frozenset(site.replay.ignore_params)
         self._sensitive_headers = frozenset(
             name.lower()
             for name in ["Cookie", "Set-Cookie", "Authorization", *site.settings.redact_headers]
@@ -89,49 +89,10 @@ class RunRecorder:
                         sensitive.add("session")
         return sensitive
 
-    def redact_variables(
-        self,
-        variables: dict[str, Any],
-        request_headers: dict[str, list[str]],
-        response_headers: dict[str, list[str]],
-    ) -> dict[str, Any]:
-        secrets = [
-            value
-            for headers in (request_headers, response_headers)
-            for name, values in headers.items()
-            if name.lower() in self._sensitive_headers
-            for value in values
-            if value
-        ]
-
-        def collect(value: Any, path: str, sensitive: bool = False) -> None:
-            sensitive = sensitive or path in self._sensitive_variables
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    collect(item, f"{path}.{key}", sensitive)
-            elif isinstance(value, list):
-                for item in value:
-                    collect(item, path, sensitive)
-            elif sensitive and isinstance(value, str) and value:
-                secrets.append(value)
-
-        for key, value in variables.items():
-            collect(value, key)
-
-        def redact(value: Any, path: str) -> Any:
-            if path in self._sensitive_variables or (
-                isinstance(value, str)
-                and value
-                and any(value in secret or secret in value for secret in secrets)
-            ):
-                return REDACTED
-            if isinstance(value, dict):
-                return {key: redact(item, f"{path}.{key}") for key, item in value.items()}
-            if isinstance(value, list):
-                return [redact(item, path) for item in value]
-            return value
-
-        return {key: redact(value, key) for key, value in variables.items()}
+    def redact_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        return MetadataRedactor(
+            metadata, self._sensitive_variables, self._sensitive_headers
+        ).redact()
 
     def record(self, capture: Capture, trace: dict[str, Any]) -> None:
         if self.level == "off":

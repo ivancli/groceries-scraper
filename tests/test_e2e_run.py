@@ -1,8 +1,10 @@
 """`scrape run` against a local listing → product site (HTML listing, JSON API)."""
 
 import base64
+import copy
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -14,9 +16,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from string import Template
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import pytest
+import yaml
 
 PAGES = 3
 PER_PAGE = 2
@@ -78,7 +81,12 @@ class _Shop(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self.server.paths.append(self.path)
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.server.authorizations.append(self.headers.get("Authorization", ""))
+        data = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
+            body = {key: values[0] for key, values in parse_qs(data.decode()).items()}
+        else:
+            body = json.loads(data)
         if self.server.csrf and not self._valid_token():
             self._send("text/plain", "token mismatch", status=419)
             return
@@ -98,6 +106,9 @@ class _Shop(BaseHTTPRequestHandler):
         if self.server.home_failures:
             self.server.home_failures -= 1
             self.send_error(503)
+            return
+        if self.server.session_payload is not None:
+            self._send("application/json", json.dumps(self.server.session_payload))
             return
         sid, token = secrets.token_hex(4), secrets.token_hex(4)
         self.server.tokens[sid] = token
@@ -141,6 +152,8 @@ class _ShopServer(ThreadingHTTPServer):
     wrap_pagination = False  # the last listing page links back to the first
     product_responses: dict[str, tuple[int, str]]
     extra_headers: list[tuple[str, str]]
+    session_payload: dict[str, Any] | None = None
+    authorizations: list[str]
 
 
 def _skus() -> list[str]:
@@ -166,6 +179,7 @@ def shop() -> Iterator[_ShopServer]:
     server.tokens = {}
     server.product_responses = {}
     server.extra_headers = []
+    server.authorizations = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -608,3 +622,256 @@ page_types:
         {"error": "business data", "dropped": True}
     ]
     assert _captures(run_dir) == []
+
+
+@pytest.mark.parametrize("pin", [123456, 0, False, 98.5])
+def test_numeric_session_secrets_and_their_copies_are_redacted(
+    tmp_path: Path, shop: _ShopServer, pin: int | float | bool
+) -> None:
+    shop.session_payload = {
+        "pin": pin,
+        "copy": pin,
+        "text_copy": str(pin),
+        "nested": [pin, str(pin)],
+        "count": 2,
+        "active": True,
+    }
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    session = f"""
+session:
+  setup:
+    - request: {{url: "{base}/"}}
+      extract:
+        pin: {{jsonpath: $.pin}}
+        copy: {{jsonpath: $.copy}}
+        text_copy: {{jsonpath: $.text_copy}}
+        nested: {{jsonpath: $.nested}}
+        count: {{jsonpath: $.count}}
+        active: {{jsonpath: $.active}}
+"""
+    (tmp_path / "e2e.yaml").write_text(
+        SITE.substitute(
+            base=base,
+            settings="",
+            session=session,
+            headers='headers: {Authorization: "Bearer {{ session.pin }}"}',
+        )
+    )
+    run_dir, _ = _crawl_config(tmp_path)
+    variables = [
+        capture["variables"]["session"]
+        for capture in _captures(run_dir)
+        if capture["page_type"] != "session_setup"
+    ]
+    assert variables
+    assert all(
+        value
+        == {
+            "pin": "[REDACTED]",
+            "copy": "[REDACTED]",
+            "text_copy": "[REDACTED]",
+            "nested": ["[REDACTED]", "[REDACTED]"],
+            "count": 2,
+            "active": True,
+        }
+        for value in variables
+    )
+    assert len(_records(run_dir)) == 6
+
+
+@pytest.mark.parametrize("pin", [123456, 2, "s3cr+et/token?", "s3cr&et", "s3cr et"])
+def test_known_secrets_are_redacted_from_capture_urls_without_changing_requests(
+    tmp_path: Path, shop: _ShopServer, pin: int | str
+) -> None:
+    shop.session_payload = {"pin": pin}
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    session = f"""
+session:
+  setup:
+    - request: {{url: "{base}/"}}
+      extract:
+        pin: {{jsonpath: $.pin}}
+"""
+    encoded = "{{ session.pin | string | urlencode | replace('/', '%2F') }}"
+    template = (
+        f"{base}/api/public%2Fsku/{encoded}/product?pin={encoded}&raw={{{{ session.pin }}}}"
+        "&public=visible&blank="
+    )
+    content_location = (
+        base.replace("http://", f"http://client:{quote(str(pin), safe='')}@")
+        + f"/api/public%2Fsku/{quote(str(pin), safe='')}/product"
+        f"?pin={quote(str(pin), safe='')}&public=visible#public%2Fsku/{quote(str(pin), safe='')}"
+    )
+    shop.extra_headers = [("Content-Location", content_location)]
+    config = SITE.substitute(
+        base=base,
+        settings="",
+        session=session,
+        headers='headers: {Authorization: "Bearer {{ session.pin }}", '
+        f'Referer: "{template}"}}',
+    ).replace(f'url: "{base}/api/product"', f'url: "{template}"')
+    (tmp_path / "e2e.yaml").write_text(config)
+    run_dir, log = _crawl_config(tmp_path)
+    captures = [capture for capture in _captures(run_dir) if capture["page_type"] == "product"]
+    assert len(captures) == len(_records(run_dir)) == 6, log
+    for capture in captures:
+        for side in ("request", "response"):
+            recorded_url = capture[side]["url"]
+            parsed = urlsplit(recorded_url)
+            assert parsed.hostname == "127.0.0.1"
+            assert parsed.port == shop.server_address[1]
+            assert parsed.path == "/api/public%2Fsku/%5BREDACTED%5D/product"
+            assert parse_qs(parsed.query, keep_blank_values=True) == {
+                "pin": ["[REDACTED]"],
+                "raw": ["[REDACTED]"],
+                "public": ["visible"],
+                "blank": [""],
+            }
+        content_url = urlsplit(capture["response"]["headers"]["Content-Location"][0])
+        assert unquote(content_url.netloc.split("@", 1)[0]) == "[REDACTED]"
+        assert content_url.path == "/api/public%2Fsku/%5BREDACTED%5D/product"
+        assert content_url.fragment == "public%2Fsku/%5BREDACTED%5D"
+        assert parse_qs(content_url.query) == {"pin": ["[REDACTED]"], "public": ["visible"]}
+        referer = capture["request"]["headers"]["Referer"][0]
+        assert referer == capture["request"]["url"]
+    original_paths = [path for path in shop.paths if path.startswith("/api/")]
+    assert len(original_paths) == 6
+    assert all(str(pin) in unquote(path) for path in original_paths)
+    for authorization in shop.authorizations:
+        assert authorization == f"Bearer {pin}"
+    for capture in _captures(run_dir):
+        content_url = urlsplit(capture["response"]["headers"]["Content-Location"][0])
+        assert content_url.path == "/api/public%2Fsku/%5BREDACTED%5D/product"
+        assert content_url.fragment == "public%2Fsku/%5BREDACTED%5D"
+
+
+@pytest.mark.parametrize("ignore", [False, True])
+@pytest.mark.parametrize("location", ["query", "json", "form"])
+def test_capture_fingerprints_use_original_requests_and_the_source_ignore_policy(
+    tmp_path: Path, shop: _ShopServer, ignore: bool, location: str
+) -> None:
+    shop.session_payload = {"pin": 123456, "other_pin": 987654}
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config["session"] = {
+        "setup": [
+            {
+                "request": {"url": f"{base}/"},
+                "extract": {
+                    "pin": {"jsonpath": "$.pin"},
+                    "other_pin": {"jsonpath": "$.other_pin"},
+                },
+            }
+        ]
+    }
+    if ignore:
+        config["replay"] = {"ignore_params": ["pin"]}
+    first = config["page_types"]["listing"]["follow"][0]
+    second = copy.deepcopy(first)
+    for rule, variable in ((first, "pin"), (second, "other_pin")):
+        request = rule["request"]
+        token = f"{{{{ session.{variable} }}}}"
+        request["headers"] = {"Authorization": f"Bearer {token}"}
+        if location == "query":
+            request["url"] += f"?pin={token}&public=visible"
+        elif location == "json":
+            request["json"]["pin"] = token
+        else:
+            request["form"] = {**request.pop("json"), "pin": token}
+    config["page_types"]["listing"]["follow"].insert(1, second)
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    run_dir, _ = _crawl_config(tmp_path)
+    captures = [capture for capture in _captures(run_dir) if capture["page_type"] == "product"]
+    assert len(captures) == len(_records(run_dir)) == 12
+    assert len({capture["request"]["fingerprint"] for capture in captures}) == (6 if ignore else 12)
+    assert all(record["name"] == f"Product {record['sku']}" for record in _records(run_dir))
+    for sku in _skus():
+        pair = [capture["request"] for capture in captures if capture["variables"]["sku"] == sku]
+        assert len(pair) == 2
+        assert pair[0]["url"] == pair[1]["url"]
+        for request in pair:
+            assert re.fullmatch(r"scrapy-sha1-v1:[0-9a-f]{40}", request["fingerprint"])
+        assert (pair[0]["fingerprint"] == pair[1]["fingerprint"]) is ignore
+
+
+@pytest.mark.parametrize(
+    ("pin", "suffix", "masked"),
+    [
+        (
+            "abc?def",
+            "/public%2Fsku/abc?def?public=visible",
+            "/public%2Fsku/%5BREDACTED%5D?public=visible",
+        ),
+        (
+            "abc#def",
+            "/public%2Fsku?token=abc#def&public=visible",
+            "/public%2Fsku?token=%5BREDACTED%5D&public=visible",
+        ),
+        (
+            "abc def",
+            "/public%2Fsku/abc+def?token=abc+def",
+            "/public%2Fsku/abc+def?token=%5BREDACTED%5D",
+        ),
+    ],
+)
+def test_url_headers_mask_secrets_crossing_component_boundaries(
+    tmp_path: Path, shop: _ShopServer, pin: str, suffix: str, masked: str
+) -> None:
+    shop.session_payload = {"pin": pin}
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    shop.extra_headers = [("Content-Location", base + suffix)]
+    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config["session"] = {
+        "setup": [{"request": {"url": base + "/"}, "extract": {"pin": {"jsonpath": "$.pin"}}}]
+    }
+    config["page_types"]["listing"]["follow"][0]["request"]["headers"] = {
+        "Authorization": "Bearer {{ session.pin }}",
+        "Referer": base + suffix,
+    }
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    run_dir, _ = _crawl_config(tmp_path)
+    captures = [capture for capture in _captures(run_dir) if capture["page_type"] == "product"]
+    assert len(captures) == len(_records(run_dir)) == 6
+    for capture in captures:
+        assert capture["request"]["headers"]["Referer"] == [base + masked]
+        assert capture["response"]["headers"]["Content-Location"] == [base + masked]
+    assert shop.authorizations == [f"Bearer {pin}"] * 6
+
+
+def test_custom_numeric_secret_copies_are_redacted_before_json_serialization(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.session_payload = {"pin": "987.6500", "copy": "987.6500"}
+    (tmp_path / "transforms.py").write_text(
+        "from decimal import Decimal\ndef decimal(value, ctx):\n    return Decimal(value)\n"
+    )
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = yaml.safe_load(
+        SITE.substitute(
+            base=base,
+            settings="",
+            session="",
+            headers='headers: {Authorization: "Bearer {{ session.pin }}"}',
+        )
+    )
+    config["session"] = {
+        "setup": [
+            {
+                "request": {"url": f"{base}/"},
+                "extract": {
+                    name: [{"jsonpath": f"$.{name}"}, {"fn": "transforms:decimal"}]
+                    for name in ("pin", "copy")
+                },
+            }
+        ]
+    }
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    run_dir, _ = _crawl_config(tmp_path, env={**os.environ, "PYTHONPATH": str(tmp_path)})
+    variables = [
+        capture["variables"]["session"]
+        for capture in _captures(run_dir)
+        if capture["page_type"] != "session_setup"
+    ]
+    assert variables
+    assert all(value == {"pin": "[REDACTED]", "copy": "[REDACTED]"} for value in variables)
+    assert len(_records(run_dir)) == 6

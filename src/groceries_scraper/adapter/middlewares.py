@@ -11,6 +11,7 @@ from scrapy.crawler import Crawler
 from scrapy.http import Response
 from scrapy.http.headers import Headers
 
+from groceries_scraper.adapter.fingerprint import request_fingerprint
 from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.run.recording import Capture, RunRecorder
 
@@ -55,20 +56,19 @@ class CaptureMiddleware:
             "capture_no": capture_no,
             "page_type": page_type,
             "parent_capture_no": request.meta.get(PARENT_CAPTURE),
-            "variables": self.recorder.redact_variables(
-                request.meta.get(VARIABLES, {}), request_headers, response_headers
-            ),
+            "variables": request.meta.get(VARIABLES, {}),
             "request": {
                 "method": request.method,
+                "fingerprint": request_fingerprint(request, self.recorder.ignore_params),
                 "url": request.url,
-                "headers": self.recorder.redact_headers(request_headers),
+                "headers": request_headers,
                 "body": base64.b64encode(request.body).decode("ascii"),
                 "body_encoding": "base64",
             },
             "response": {
                 "url": response.url,
                 "status": response.status,
-                "headers": self.recorder.redact_headers(response_headers),
+                "headers": response_headers,
                 "timing": {
                     "started_at": started_at,
                     "finished_at": datetime.now(UTC).isoformat(),
@@ -76,7 +76,7 @@ class CaptureMiddleware:
                 },
             },
         }
-        capture = Capture(capture_no, page_type, meta, response.body)
+        capture = Capture(capture_no, page_type, self.recorder.redact_metadata(meta), response.body)
         request.meta[CAPTURE] = capture
         # Redirects and retries copy meta: the next exchange descends from this one.
         request.meta[PARENT_CAPTURE] = capture_no
