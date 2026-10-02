@@ -8,33 +8,35 @@ from typing import IO, Self
 from scrapy.crawler import Crawler
 from scrapy.exceptions import DropItem
 
-from groceries_scraper.adapter.settings import RUN
+from groceries_scraper.adapter.settings import RECORD_LIMIT, RUN
 from groceries_scraper.engine.extract import Record
 from groceries_scraper.run import Run
 
 
 @dataclass(frozen=True)
-class RecordItem:
+class EmittedRecord:
+    """What the spider yields to Scrapy: a Record plus where it came from."""
+
     record: Record
     source_url: str
     capture_no: int
 
 
 class RecordPipeline:
-    def __init__(self, run: Run, limit: int) -> None:
+    def __init__(self, run: Run, limit: int | None) -> None:
         self.run = run
-        self.limit = limit  # 0: no limit
+        self.limit = limit
         self.written = 0
         self._files: dict[str, IO[str]] = {}
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> Self:
-        return cls(crawler.settings[RUN], crawler.settings.getint("CLOSESPIDER_ITEMCOUNT"))
+        return cls(crawler.settings[RUN], crawler.settings[RECORD_LIMIT])
 
     def process_item(self, item: object) -> object:
-        if not isinstance(item, RecordItem):
+        if not isinstance(item, EmittedRecord):
             return item
-        if self.limit and self.written >= self.limit:
+        if self.limit is not None and self.written >= self.limit:
             raise DropItem("Record limit reached")
         record = item.record
         meta = {

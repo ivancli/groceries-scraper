@@ -5,8 +5,9 @@ from typing import Any
 from groceries_scraper.config import Site
 from groceries_scraper.run import Run
 
-# Custom setting carrying the Run to the Record pipeline.
+# Custom settings carrying the Run and `--limit` to the Record pipeline.
 RUN = "GROCERIES_RUN"
+RECORD_LIMIT = "GROCERIES_RECORD_LIMIT"
 
 
 def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str, Any]:
@@ -18,8 +19,9 @@ def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str,
         "TELNETCONSOLE_ENABLED": False,
         "LOG_LEVEL": "INFO",
         RUN: run,
+        # The pipeline drops Records still in flight once the spider starts closing.
+        RECORD_LIMIT: limit,
     }
     if limit is not None:
-        # The pipeline also reads this, to drop Records already in flight at close.
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
     return settings

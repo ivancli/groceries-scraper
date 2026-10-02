@@ -21,11 +21,11 @@ def _not_implemented(command: str) -> NoReturn:
 @app.command()
 def validate(site_config: Path) -> None:
     """Validate a Site config."""
-    _load(site_config)
+    _load_site_or_exit(site_config)
     typer.echo(f"{site_config} is valid")
 
 
-def _load(site_config: Path) -> Site:
+def _load_site_or_exit(site_config: Path) -> Site:
     try:
         site, findings = load_checked_site(site_config)
     except ConfigError as exc:
@@ -50,7 +50,9 @@ def run(
     """Run a Site."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
-    site = _load(site_config)
+    if record is not None:
+        _not_implemented("run --record")
+    site = _load_site_or_exit(site_config)
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
     crawl(site, new_run, limit)
