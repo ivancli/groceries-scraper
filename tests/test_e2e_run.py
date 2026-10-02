@@ -70,7 +70,7 @@ class _Shop(BaseHTTPRequestHandler):
             self._home()
         elif url.path == "/c/dairy":
             page = int(parse_qs(url.query).get("page", ["1"])[0])
-            self._send("text/html; charset=utf-8", _listing(page))
+            self._send("text/html; charset=utf-8", _listing(page, self.server.wrap_pagination))
         else:
             self.send_error(404)
 
@@ -88,6 +88,10 @@ class _Shop(BaseHTTPRequestHandler):
     def _home(self) -> None:
         if self.server.home_status != 200:
             self.send_error(self.server.home_status)
+            return
+        if self.server.home_failures:
+            self.server.home_failures -= 1
+            self.send_error(503)
             return
         sid, token = secrets.token_hex(4), secrets.token_hex(4)
         self.server.tokens[sid] = token
@@ -125,19 +129,23 @@ class _ShopServer(ThreadingHTTPServer):
     served = 0
     home_status = 200
     home_redirects = False  # `/` → `/home`, as localised homepages often do
+    home_failures = 0  # the homepage's first N responses are 503s
+    wrap_pagination = False  # the last listing page links back to the first
 
 
 def _skus() -> list[str]:
     return [f"p{page}{i}" for page in range(1, PAGES + 1) for i in range(PER_PAGE)]
 
 
-def _listing(page: int) -> str:
+def _listing(page: int, wrap: bool = False) -> str:
     tiles = "".join(
         f'<div class="tile" data-sku="p{page}{i}"><a href="/p/p{page}{i}">P</a>'
         f'<span class="price">{page}.{i}0</span></div>'
         for i in range(PER_PAGE)
     )
     more = f'<a class="next" href="/c/dairy?page={page + 1}">next</a>' if page < PAGES else ""
+    if wrap and page == PAGES:
+        more = '<a class="next" href="/c/dairy">first</a>'
     return f"<html><body>{tiles}{more}</body></html>"
 
 
@@ -159,7 +167,7 @@ session:
     - request: {url: "$base/"}
       extract:
         csrf: {css: "meta[name=csrf-token]::attr(content)"}
-  refresh_on: [419]
+  refresh_on: [$refresh_on]
   max_refresh: $max_refresh
 """)
 CSRF_HEADER = 'headers: {X-CSRF-Token: "{{ session.csrf }}"}'
@@ -175,10 +183,15 @@ def _run_with_log(
     *args: str,
     settings: str = "",
     max_refresh: int | None = None,
+    refresh_on: str = "419",
 ) -> tuple[Path, str]:
     """`max_refresh` set: the Site runs Session Setup and sends the CSRF header."""
     base = f"http://127.0.0.1:{shop.server_address[1]}"
-    session = "" if max_refresh is None else SESSION.substitute(base=base, max_refresh=max_refresh)
+    session = (
+        ""
+        if max_refresh is None
+        else SESSION.substitute(base=base, max_refresh=max_refresh, refresh_on=refresh_on)
+    )
     headers = "" if max_refresh is None else CSRF_HEADER
     config = tmp_path / "e2e.yaml"
     config.write_text(
@@ -291,6 +304,27 @@ def test_session_setup_follows_redirects(tmp_path: Path, shop: _ShopServer) -> N
     run_dir, _ = _run_with_log(tmp_path, shop, max_refresh=1)
 
     assert len(_records(run_dir)) == len(_skus())
+
+
+def test_start_requests_held_for_session_setup_are_still_deduplicated(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf, shop.wrap_pagination = True, True
+
+    _run_with_log(tmp_path, shop, max_refresh=1)
+
+    assert shop.paths.count("/c/dairy") == 1
+
+
+def test_session_setup_is_retried_even_for_a_refresh_status(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf, shop.home_failures = True, 1
+
+    run_dir, _ = _run_with_log(tmp_path, shop, max_refresh=1, refresh_on="419, 503")
+
+    assert len(_records(run_dir)) == len(_skus())
+    assert shop.paths.count("/") == 2
 
 
 def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer) -> None:

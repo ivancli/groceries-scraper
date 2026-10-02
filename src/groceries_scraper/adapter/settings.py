@@ -2,8 +2,6 @@
 
 from typing import Any
 
-from scrapy.settings.default_settings import RETRY_HTTP_CODES
-
 from groceries_scraper.config import Site
 from groceries_scraper.run import Run
 
@@ -18,6 +16,9 @@ def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str,
         "CONCURRENT_REQUESTS_PER_DOMAIN": site.settings.concurrent_requests_per_domain,
         "ROBOTSTXT_OBEY": site.settings.obey_robots,
         "ITEM_PIPELINES": {"groceries_scraper.adapter.pipelines.RecordPipeline": 300},
+        "DOWNLOADER_MIDDLEWARES": {
+            "groceries_scraper.adapter.middlewares.RefreshStatusMiddleware": 560,
+        },
         "TELNETCONSOLE_ENABLED": False,
         "LOG_LEVEL": "INFO",
         RUN: run,
@@ -26,8 +27,4 @@ def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str,
     }
     if limit is not None:
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
-    if site.session is not None:
-        # Retrying would resend the stale Session; the spider refreshes it first.
-        refresh_on = set(site.session.refresh_on)
-        settings["RETRY_HTTP_CODES"] = [c for c in RETRY_HTTP_CODES if c not in refresh_on]
     return settings

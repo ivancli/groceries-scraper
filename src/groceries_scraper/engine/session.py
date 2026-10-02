@@ -6,27 +6,14 @@ from enum import Enum
 from typing import Any
 
 from groceries_scraper.config.models import SetupStep
-from groceries_scraper.engine.follow import RenderedRequest, render_request
 from groceries_scraper.engine.page import parse_scope
-from groceries_scraper.engine.pipe import PipeContext, StepTrace, plain, run_pipe
-
-
-@dataclass(frozen=True)
-class ExtractTrace:
-    name: str
-    steps: list[StepTrace]
+from groceries_scraper.engine.pipe import PipeContext, plain, run_pipe
 
 
 @dataclass(frozen=True)
 class SetupResult:
     session: dict[str, Any] = field(default_factory=dict)  # empty when `error` is set
-    trace: list[ExtractTrace] = field(default_factory=list)
     error: str | None = None
-
-
-def setup_request(step: SetupStep, ctx: PipeContext) -> RenderedRequest:
-    """`ctx.session` holds only what earlier steps extracted."""
-    return render_request(step.request, None, ctx)
 
 
 def evaluate_setup(
@@ -40,23 +27,23 @@ def evaluate_setup(
         scope = parse_scope("json" if is_json else "html", body, content_type)
     except ValueError as exc:
         return SetupResult(error=f"Session Setup response is not JSON: {exc}")
-    session, trace = {}, []
+    session = {}
     for name, pipe in step.extract.items():
         values, steps = run_pipe(pipe, scope, ctx)
-        trace.append(ExtractTrace(name, steps))
         if not values:
             # Later templates would fail on every request; stop the Run here instead.
-            return SetupResult(trace=trace, error=f"Session Variable `{name}` has no value")
+            cause = next((f": {s.error}" for s in steps if s.error), "")
+            return SetupResult(error=f"Session Variable `{name}` has no value{cause}")
         session[name] = plain(values[0])
-    return SetupResult(session, trace)
+    return SetupResult(session)
 
 
-class Refresh(Enum):
-    PROCEED = "proceed"  # not a refresh status: handle the response
-    REFRESH = "refresh"  # re-run Session Setup, then retry
+class RefreshAction(Enum):
+    PROCEED = "proceed"
+    REFRESH = "refresh"  # then retry
     WAIT = "wait"  # Setup is already re-running: retry once it ends
     RETRY = "retry"  # sent with an older Session: retry with the current one
-    GIVE_UP = "give_up"  # `max_refresh` reached
+    GIVE_UP = "give_up"
 
 
 class SessionRefresh:
@@ -69,18 +56,18 @@ class SessionRefresh:
         self.refreshes = 0
         self.refreshing = False
 
-    def on_status(self, status: int, generation: int) -> Refresh:
+    def on_status(self, status: int, generation: int) -> RefreshAction:
         if status not in self.refresh_on:
-            return Refresh.PROCEED
+            return RefreshAction.PROCEED
         if self.refreshing:
-            return Refresh.WAIT
+            return RefreshAction.WAIT
         if generation < self.generation:
-            return Refresh.RETRY
+            return RefreshAction.RETRY
         if self.refreshes >= self.max_refresh:
-            return Refresh.GIVE_UP
+            return RefreshAction.GIVE_UP
         self.refreshes += 1
         self.refreshing = True
-        return Refresh.REFRESH
+        return RefreshAction.REFRESH
 
     def refreshed(self) -> None:
         self.generation += 1
