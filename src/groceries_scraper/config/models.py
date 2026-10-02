@@ -54,6 +54,7 @@ NO_ARG_KINDS = ("strip", "lower", "upper", "urljoin")
 
 
 ScopeKind = Literal["html", "json"]
+RecordLevel = Literal["all", "errors", "off"]
 
 
 class Step(_Model):
@@ -147,7 +148,7 @@ class FieldSpec(_Model):
         # whole Field is a Pipe list.
         if isinstance(data, list):
             return {PIPE_KEY: data}
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or PIPE_KEY in data:
             return data
         own = {k: v for k, v in data.items() if k in FIELD_KEYS}
         step = {k: v for k, v in data.items() if k not in FIELD_KEYS}
@@ -255,7 +256,8 @@ class Settings(_Model):
     download_delay: Annotated[float, Field(ge=0)]
     concurrent_requests_per_domain: Annotated[int, Field(ge=1)]
     obey_robots: bool
-    record_level: Literal["all", "errors", "off"]
+    record_level: RecordLevel
+    redact_headers: list[str] = Field(default_factory=list)
 
 
 class SetupStep(_Model):

@@ -62,3 +62,10 @@ def test_validate_exits_non_zero_on_a_schema_error(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "start: List should have at least 1 item" in result.stderr
+
+
+def test_run_rejects_an_unknown_record_level(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["run", str(tmp_path / "site.yaml"), "--record", "unknown"])
+
+    assert result.exit_code == 2
+    assert "must be all, errors or off" in result.stderr

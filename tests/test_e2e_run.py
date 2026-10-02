@@ -1,6 +1,8 @@
 """`scrape run` against a local listing → product site (HTML listing, JSON API)."""
 
+import base64
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -83,6 +85,10 @@ class _Shop(BaseHTTPRequestHandler):
         self.server.served += 1
         if self.server.rotate_every and self.server.served % self.server.rotate_every == 0:
             self.server.tokens.clear()
+        if body["sku"] in self.server.product_responses:
+            status, payload = self.server.product_responses[body["sku"]]
+            self._send("application/json", payload, status=status)
+            return
         self._send("application/json", json.dumps({"name": f"Product {body['sku']}"}))
 
     def _home(self) -> None:
@@ -111,6 +117,8 @@ class _Shop(BaseHTTPRequestHandler):
         self.send_response(status)
         if cookie:
             self.send_header("Set-Cookie", cookie)
+        for name, value in self.server.extra_headers:
+            self.send_header(name, value)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -131,6 +139,8 @@ class _ShopServer(ThreadingHTTPServer):
     home_redirects = False  # `/` → `/home`, as localised homepages often do
     home_failures = 0  # the homepage's first N responses are 503s
     wrap_pagination = False  # the last listing page links back to the first
+    product_responses: dict[str, tuple[int, str]]
+    extra_headers: list[tuple[str, str]]
 
 
 def _skus() -> list[str]:
@@ -154,6 +164,8 @@ def shop() -> Iterator[_ShopServer]:
     server = _ShopServer(("127.0.0.1", 0), _Shop)
     server.paths = []
     server.tokens = {}
+    server.product_responses = {}
+    server.extra_headers = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -167,6 +179,8 @@ session:
     - request: {url: "$base/"}
       extract:
         csrf: {css: "meta[name=csrf-token]::attr(content)"}
+        token_copy: {css: "meta[name=csrf-token]::attr(content)"}
+        locale: {template: "en-AU"}
   refresh_on: [$refresh_on]
   max_refresh: $max_refresh
 """)
@@ -184,6 +198,7 @@ def _run_with_log(
     settings: str = "",
     max_refresh: int | None = None,
     refresh_on: str = "419",
+    request_headers: str | None = None,
 ) -> tuple[Path, str]:
     """`max_refresh` set: the Site runs Session Setup and sends the CSRF header."""
     base = f"http://127.0.0.1:{shop.server_address[1]}"
@@ -192,14 +207,25 @@ def _run_with_log(
         if max_refresh is None
         else SESSION.substitute(base=base, max_refresh=max_refresh, refresh_on=refresh_on)
     )
-    headers = "" if max_refresh is None else CSRF_HEADER
+    headers = (
+        request_headers
+        if request_headers is not None
+        else ("" if max_refresh is None else CSRF_HEADER)
+    )
     config = tmp_path / "e2e.yaml"
     config.write_text(
         SITE.substitute(base=base, settings=settings, session=session, headers=headers)
     )
+    return _crawl_config(tmp_path, *args)
+
+
+def _crawl_config(
+    tmp_path: Path, *args: str, env: dict[str, str] | None = None
+) -> tuple[Path, str]:
     result = subprocess.run(
-        [str(SCRAPE), "run", str(config), *args],
+        [str(SCRAPE), "run", str(tmp_path / "e2e.yaml"), *args],
         cwd=tmp_path,
+        env=env,
         capture_output=True,
         text=True,
         timeout=60,
@@ -283,6 +309,18 @@ def test_a_rotated_token_refreshes_the_session_and_retries(
     assert sorted(r["sku"] for r in _records(run_dir)) == _skus()
     assert shop.paths.count("/") == 3
     assert "'session/refreshes': 2" in log
+    captures = _captures(run_dir)
+    by_number = {capture["capture_no"]: capture for capture in captures}
+    failures = [capture for capture in captures if capture["response"]["status"] == 419]
+    assert failures
+    failed_numbers = {capture["capture_no"] for capture in failures}
+    retries = [capture for capture in captures if capture["parent_capture_no"] in failed_numbers]
+    assert any(capture["page_type"] == "product" for capture in retries)
+    for capture in retries:
+        if capture["page_type"] == "product":
+            parent = by_number[capture["parent_capture_no"]]
+            assert capture["request"]["url"] == parent["request"]["url"]
+            assert capture["variables"]["session"]["csrf"] != parent["variables"]["session"]["csrf"]
 
 
 def test_exceeding_max_refresh_stops_refreshing_and_is_reported(
@@ -304,6 +342,10 @@ def test_session_setup_follows_redirects(tmp_path: Path, shop: _ShopServer) -> N
     run_dir, _ = _run_with_log(tmp_path, shop, max_refresh=1)
 
     assert len(_records(run_dir)) == len(_skus())
+    setup = [capture for capture in _captures(run_dir) if capture["page_type"] == "session_setup"]
+    assert [capture["response"]["status"] for capture in setup] == [302, 200]
+    assert setup[0]["parent_capture_no"] is None
+    assert setup[1]["parent_capture_no"] == setup[0]["capture_no"]
 
 
 def test_start_requests_held_for_session_setup_are_still_deduplicated(
@@ -325,6 +367,9 @@ def test_session_setup_is_retried_even_for_a_refresh_status(
 
     assert len(_records(run_dir)) == len(_skus())
     assert shop.paths.count("/") == 2
+    setup = [capture for capture in _captures(run_dir) if capture["page_type"] == "session_setup"]
+    assert [capture["response"]["status"] for capture in setup] == [503, 200]
+    assert setup[1]["parent_capture_no"] == setup[0]["capture_no"]
 
 
 def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer) -> None:
@@ -335,3 +380,231 @@ def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer)
     assert "/c/dairy" not in shop.paths
     assert "Session Setup step 0 failed: Session Setup request got HTTP 503" in log
     assert "'finish_reason': 'session_setup_failed'" in log
+
+
+def _captures(run_dir: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(path.read_text()) for path in sorted((run_dir / "captures").glob("*.meta.json"))
+    ]
+
+
+def test_run_captures_link_records_and_traces_to_their_parent_page(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _run(tmp_path, shop)
+    captures = _captures(run_dir)
+    assert [capture["capture_no"] for capture in captures] == list(range(1, 10))
+    by_number = {capture["capture_no"]: capture for capture in captures}
+    for capture in captures:
+        number, page_type = capture["capture_no"], capture["page_type"]
+        stem = f"{number:04d}-{page_type}"
+        trace = json.loads((run_dir / "traces" / f"{stem}.trace.json").read_text())
+        body = (run_dir / "captures" / f"{stem}.body").read_bytes()
+        assert (trace["capture_no"], trace["page_type"]) == (number, page_type)
+        assert capture["response"]["status"] == 200
+        timing = capture["response"]["timing"]
+        assert datetime.fromisoformat(timing["started_at"]) <= datetime.fromisoformat(
+            timing["finished_at"]
+        )
+        assert timing["elapsed_seconds"] >= 0
+        parent = capture["parent_capture_no"]
+        if number == 1:
+            assert parent is None
+        else:
+            assert parent < number
+            assert by_number[parent]["page_type"] == "listing"
+        if page_type == "listing":
+            assert capture["request"]["method"] == "GET"
+            assert trace["loop"][0]["step"] == "css"
+            assert any(entry["path"] == "pass.price" for entry in trace["follow"])
+            assert b'div class="tile"' in body
+        else:
+            sku = capture["variables"]["sku"]
+            assert capture["request"]["method"] == "POST"
+            assert capture["request"]["body_encoding"] == "base64"
+            assert json.loads(base64.b64decode(capture["request"]["body"])) == {"sku": sku}
+            assert json.loads(body) == {"name": f"Product {sku}"}
+            name_trace = next(entry for entry in trace["fields"] if entry["path"] == "name")
+            assert name_trace["steps"] == [
+                {"step": "jsonpath", "output": [f"Product {sku}"], "error": None}
+            ]
+    for record in _records(run_dir):
+        capture = by_number[record["_meta"]["capture_no"]]
+        assert capture["page_type"] == "product"
+        assert capture["variables"]["sku"] == record["sku"]
+
+
+def test_errors_recording_keeps_only_http_and_extraction_failures(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {
+        "p10": (422, '{"error": "unavailable"}'),
+        "p20": (200, '{"name": {"unexpected": "object"}}'),
+        "p30": (200, "invalid JSON"),
+    }
+    run_dir = _run(tmp_path, shop, settings=", record_level: errors")
+    captures = _captures(run_dir)
+    assert {capture["variables"]["sku"] for capture in captures} == {"p10", "p20", "p30"}
+    assert sorted(capture["response"]["status"] for capture in captures) == [200, 200, 422]
+    assert all(capture["page_type"] == "product" for capture in captures)
+    assert len(list((run_dir / "captures").glob("*.body"))) == 3
+    assert len(list((run_dir / "traces").glob("*.trace.json"))) == 3
+    for capture in captures:
+        trace = json.loads(
+            (run_dir / "traces" / (f"{capture['capture_no']:04d}-product.trace.json")).read_text()
+        )
+        if capture["variables"]["sku"] == "p20":
+            assert any(entry["error"] for entry in trace["fields"])
+        if capture["variables"]["sku"] == "p30":
+            assert trace["error"].startswith("JSONDecodeError:")
+
+
+@pytest.mark.parametrize(
+    ("configured", "override", "expected"),
+    [("all", "off", "off"), ("off", "all", "all"), ("all", "errors", "errors")],
+)
+def test_cli_record_override_is_saved_and_controls_capture_output(
+    tmp_path: Path, shop: _ShopServer, configured: str, override: str, expected: str
+) -> None:
+    run_dir = _run(tmp_path, shop, "--record", override, settings=f', record_level: "{configured}"')
+    manifest = json.loads((run_dir / "run.json").read_text())
+    assert manifest["config"]["settings"]["record_level"] == expected
+    assert len(_records(run_dir)) == 6
+    if expected == "all":
+        assert len(_captures(run_dir)) == 9
+    else:
+        assert not (run_dir / "captures").exists()
+        assert not (run_dir / "traces").exists()
+
+
+def test_sensitive_headers_and_their_session_variables_are_absent_from_metadata(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf = True
+    shop.extra_headers = [
+        ("x-api-secret", "response-secret"),
+        ("X-Public", "first"),
+        ("X-Public", "second"),
+    ]
+    run_dir, _ = _run_with_log(
+        tmp_path,
+        shop,
+        max_refresh=2,
+        settings=", redact_headers: [x-csrf-token, X-API-SECRET]",
+        request_headers='headers: {Authorization: "Bearer auth-secret", '
+        'X-CSRF-Token: "{{ session.csrf }}", x-api-secret: "request-secret"}',
+    )
+    captures = _captures(run_dir)
+    meta_text = "\n".join(path.read_text() for path in (run_dir / "captures").glob("*.meta.json"))
+    for secret in [
+        "auth-secret",
+        "request-secret",
+        "response-secret",
+        *shop.tokens,
+        *shop.tokens.values(),
+    ]:
+        assert secret not in meta_text
+    setup = next(capture for capture in captures if capture["page_type"] == "session_setup")
+    assert setup["response"]["headers"]["Set-Cookie"] == "[REDACTED]"
+    product = next(capture for capture in captures if capture["page_type"] == "product")
+    for header in ("Authorization", "Cookie", "X-Csrf-Token", "X-Api-Secret"):
+        assert product["request"]["headers"][header] == "[REDACTED]"
+    assert product["response"]["headers"]["X-Api-Secret"] == "[REDACTED]"
+    assert product["response"]["headers"]["X-Public"] == ["first", "second"]
+    assert product["variables"]["session"] == {
+        "csrf": "[REDACTED]",
+        "token_copy": "[REDACTED]",
+        "locale": "en-AU",
+    }
+    listing = next(capture for capture in captures if capture["page_type"] == "listing")
+    assert listing["variables"]["session"] == {
+        "csrf": "[REDACTED]",
+        "token_copy": "[REDACTED]",
+        "locale": "en-AU",
+    }
+    manifest = json.loads((run_dir / "run.json").read_text())
+    assert manifest["config"]["page_types"]["listing"]["follow"][0]["request"]["headers"] == {
+        "Authorization": "[REDACTED]",
+        "X-CSRF-Token": "[REDACTED]",
+        "x-api-secret": "[REDACTED]",
+    }
+
+
+def test_custom_step_values_can_be_recorded_without_interrupting_extraction(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    (tmp_path / "transforms.py").write_text(
+        "from decimal import Decimal\ndef decimal(value, ctx):\n    return Decimal(value)\n"
+    )
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = tmp_path / "e2e.yaml"
+    config.write_text(f"""
+site: e2e
+settings: {{download_delay: 0}}
+records: {{product: {{}}}}
+start: [{{url: "{base}/c/dairy", page_type: listing}}]
+page_types:
+  listing:
+    record: product
+    fields:
+      price:
+        type: number
+        <pipe>:
+          - {{css: ".price::text"}}
+          - {{fn: "transforms:decimal"}}
+          - {{template: "{{{{ value }}}}"}}
+""")
+    run_dir, _ = _crawl_config(tmp_path, env={**os.environ, "PYTHONPATH": str(tmp_path)})
+    assert [record["price"] for record in _records(run_dir)] == [1.0]
+    trace = json.loads((run_dir / "traces" / "0001-listing.trace.json").read_text())
+    assert trace["fields"][0]["steps"][1] == {
+        "step": "fn",
+        "output": ["1.00", "1.10"],
+        "error": None,
+    }
+
+
+def test_errors_recording_keeps_a_failed_step_in_a_follow_rule(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    (tmp_path / "e2e.yaml").write_text(f"""
+site: e2e
+settings: {{download_delay: 0, record_level: errors}}
+start: [{{url: "{base}/c/dairy", page_type: listing}}]
+page_types:
+  listing:
+    follow:
+      - select: [{{css: "a::attr(href)"}}, {{parse: json}}]
+        page_type: product
+  product: {{}}
+""")
+    run_dir, _ = _crawl_config(tmp_path)
+    [capture] = _captures(run_dir)
+    assert (capture["page_type"], capture["response"]["status"]) == ("listing", 200)
+    trace = json.loads((run_dir / "traces" / "0001-listing.trace.json").read_text())
+    [entry] = trace["follow"]
+    assert entry["error"] is None
+    assert entry["steps"][1]["error"].startswith("JSONDecodeError:")
+
+
+def test_errors_recording_does_not_treat_matched_data_as_a_trace_error(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    (tmp_path / "e2e.yaml").write_text(f"""
+site: e2e
+settings: {{download_delay: 0, record_level: errors}}
+records: {{product: {{}}}}
+start: [{{url: "{base}/c/dairy", page_type: listing}}]
+page_types:
+  listing:
+    record: product
+    fields:
+      info: [{{template: '{{"error": "business data", "dropped": true}}'}}, {{parse: json}}]
+""")
+    run_dir, _ = _crawl_config(tmp_path)
+    assert [record["info"] for record in _records(run_dir)] == [
+        {"error": "business data", "dropped": True}
+    ]
+    assert _captures(run_dir) == []

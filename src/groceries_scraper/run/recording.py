@@ -1,0 +1,167 @@
+"""Persist a Run's config, HTTP Captures and Extraction Traces."""
+
+import hashlib
+import json
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import quote
+
+from jinja2 import meta, nodes
+from jinja2.sandbox import SandboxedEnvironment
+
+from groceries_scraper.config import Site
+from groceries_scraper.run.directory import Run
+
+REDACTED = "[REDACTED]"
+
+
+@dataclass(frozen=True)
+class Capture:
+    capture_no: int
+    page_type: str
+    meta: dict[str, Any]
+    body: bytes
+
+
+class RunRecorder:
+    def __init__(self, run: Run, site: Site) -> None:
+        self.run = run
+        self.level = site.settings.record_level
+        self._sensitive_headers = frozenset(
+            name.lower()
+            for name in ["Cookie", "Set-Cookie", "Authorization", *site.settings.redact_headers]
+        )
+        # Omit model defaults such as empty Pipes, which aren't valid YAML inputs.
+        snapshot = site.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+        templates = [
+            rule["request"]
+            for page_type in snapshot["page_types"].values()
+            for rule in page_type.get("follow", [])
+            if rule.get("request") is not None
+        ]
+        if snapshot.get("session") is not None:
+            templates.extend(step["request"] for step in snapshot["session"]["setup"])
+        self._sensitive_variables = self._header_variables(templates)
+        for template in templates:
+            if "headers" in template:
+                template["headers"] = self.redact_headers(template["headers"])
+        canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        manifest = {
+            "site": run.site,
+            "run_id": run.run_id,
+            "config": snapshot,
+            "config_hash": hashlib.sha256(canonical.encode()).hexdigest(),
+        }
+        (run.path / "run.json").write_text(_json(manifest), encoding="utf-8")
+
+    def redact_headers(self, headers: dict[str, Any]) -> dict[str, Any]:
+        return {
+            name: REDACTED if name.lower() in self._sensitive_headers else value
+            for name, value in headers.items()
+        }
+
+    def _header_variables(self, templates: list[dict[str, Any]]) -> set[str]:
+        sensitive = set()
+        environment = SandboxedEnvironment()
+        for template in templates:
+            for name, source in template.get("headers", {}).items():
+                if name.lower() not in self._sensitive_headers:
+                    continue
+                tree = environment.parse(source)
+                names = meta.find_undeclared_variables(tree)
+                sensitive.update(names - {"env", "session", "value"})
+                accesses = [
+                    node
+                    for node in tree.find_all((nodes.Getattr, nodes.Getitem))
+                    if isinstance(node, nodes.Getattr | nodes.Getitem)
+                    and isinstance(node.node, nodes.Name)
+                    and node.node.name == "session"
+                ]
+                session_uses = sum(node.name == "session" for node in tree.find_all(nodes.Name))
+                if session_uses > len(accesses):
+                    sensitive.add("session")
+                for node in accesses:
+                    if isinstance(node, nodes.Getattr):
+                        sensitive.add(f"session.{node.attr}")
+                    elif isinstance(node.arg, nodes.Const):
+                        sensitive.add(f"session.{node.arg.value}")
+                    else:
+                        sensitive.add("session")
+        return sensitive
+
+    def redact_variables(
+        self,
+        variables: dict[str, Any],
+        request_headers: dict[str, list[str]],
+        response_headers: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        secrets = [
+            value
+            for headers in (request_headers, response_headers)
+            for name, values in headers.items()
+            if name.lower() in self._sensitive_headers
+            for value in values
+            if value
+        ]
+
+        def collect(value: Any, path: str, sensitive: bool = False) -> None:
+            sensitive = sensitive or path in self._sensitive_variables
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    collect(item, f"{path}.{key}", sensitive)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item, path, sensitive)
+            elif sensitive and isinstance(value, str) and value:
+                secrets.append(value)
+
+        for key, value in variables.items():
+            collect(value, key)
+
+        def redact(value: Any, path: str) -> Any:
+            if path in self._sensitive_variables or (
+                isinstance(value, str)
+                and value
+                and any(value in secret or secret in value for secret in secrets)
+            ):
+                return REDACTED
+            if isinstance(value, dict):
+                return {key: redact(item, f"{path}.{key}") for key, item in value.items()}
+            if isinstance(value, list):
+                return [redact(item, path) for item in value]
+            return value
+
+        return {key: redact(value, key) for key, value in variables.items()}
+
+    def record(self, capture: Capture, trace: dict[str, Any]) -> None:
+        if self.level == "off":
+            return
+        status = capture.meta["response"]["status"]
+        if self.level == "errors" and 200 <= status < 300 and not _has_error(trace):
+            return
+        # Page Type names are config strings, not paths.
+        stem = f"{capture.capture_no:04d}-{quote(capture.page_type, safe='')}"
+        captures, traces = self.run.path / "captures", self.run.path / "traces"
+        captures.mkdir(exist_ok=True)
+        traces.mkdir(exist_ok=True)
+        (captures / f"{stem}.meta.json").write_text(_json(capture.meta), encoding="utf-8")
+        (captures / f"{stem}.body").write_bytes(capture.body)
+        (traces / f"{stem}.trace.json").write_text(
+            _json({"capture_no": capture.capture_no, "page_type": capture.page_type, **trace}),
+            encoding="utf-8",
+        )
+
+
+def _has_error(trace: dict[str, Any]) -> bool:
+    if trace.get("error") or trace.get("dropped"):
+        return True
+    steps = list(trace.get("loop") or [])
+    for entry in [*trace.get("fields", []), *trace.get("follow", [])]:
+        if entry.get("error"):
+            return True
+        steps.extend(entry["steps"])
+    return any(step.get("error") for step in steps)
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n"
