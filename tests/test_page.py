@@ -39,7 +39,7 @@ def test_loop_nodes_are_shared_by_records_and_follow_rules() -> None:
 
     assert result.loop is not None and len(result.loop[0].output) == 2
     assert [r.data["name"] for r in result.extraction.records] == ["Milk", "Cheese"]
-    assert [r.url for r in result.follow.requests] == [
+    assert [r.request.url for r in result.follow.requests] == [
         "https://x.example/p/a1",
         "https://x.example/p/b2",
     ]

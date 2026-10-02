@@ -1,50 +1,29 @@
 """Follow Rules: turn one response into Follow Requests — descriptions only, never I/O."""
 
-import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, NamedTuple
-from urllib.parse import urlencode, urljoin
+from typing import Any
 
 from groceries_scraper.config.models import FollowRule, PageType, RequestTemplate
-from groceries_scraper.engine.pipe import (
-    PipeContext,
-    StepTrace,
-    plain,
-    render,
-    render_native,
-    run_pipe,
-)
+from groceries_scraper.engine.pipe import PipeContext, StepTrace, plain, run_pipe
+from groceries_scraper.engine.request import RenderedRequest, RequestSource
 
 
 @dataclass(frozen=True)
 class FollowRequest:
-    method: str
-    url: str
-    headers: dict[str, str]
-    body: str | None
+    request: RenderedRequest
     page_type: str
     variables: dict[str, Any]
     parent_ref: int | None  # the Capture this request was discovered in
-    # What `rerender` needs; None for requests with nothing to render (Start Requests).
-    source: "RequestSource | None" = field(default=None, compare=False, repr=False)
+    # None when there's nothing to re-render (Start Requests).
+    source: RequestSource | None = field(default=None, compare=False, repr=False)
 
-
-@dataclass(frozen=True)
-class RequestSource:
-    template: RequestTemplate
-    value: Any
-    ctx: PipeContext
-    names: Mapping[str, Any]
-
-
-def rerender(request: FollowRequest, session: Mapping[str, Any]) -> FollowRequest:
-    """Retries after a Session refresh must carry the new Session Variables."""
-    if request.source is None:
-        return request
-    source = replace(request.source, ctx=replace(request.source.ctx, session=session))
-    rendered = render_request(source.template, source.value, source.ctx, source.names)
-    return replace(request, **rendered._asdict(), source=source)
+    def with_session(self, session: Mapping[str, Any]) -> "FollowRequest":
+        """Retries after a Session refresh must carry the new Session Variables."""
+        if self.source is None:
+            return self
+        source = self.source.with_session(session)
+        return replace(self, request=source.render(), source=source)
 
 
 @dataclass(frozen=True)
@@ -108,13 +87,14 @@ class _RuleEvaluator:
 
     def _request(self, value: Any, child_ctx: PipeContext) -> FollowRequest:
         template = self.rule.request or RequestTemplate()
-        names = {self.rule.as_: value} if self.rule.as_ else {}
+        bindings = {self.rule.as_: value} if self.rule.as_ else {}
+        source = RequestSource(template, value, child_ctx, bindings)
         return FollowRequest(
-            *render_request(template, value, child_ctx, names),
+            source.render(),
             page_type=self.rule.page_type,
             variables=dict(child_ctx.variables),
             parent_ref=self.parent_ref,
-            source=RequestSource(template, value, child_ctx, names),
+            source=source,
         )
 
     def _run(self, path: str, pipe: list[Any], scope: Any, node: int | None) -> list[Any]:
@@ -126,59 +106,3 @@ class _RuleEvaluator:
         self, path: str, steps: list[StepTrace], node: int | None, error: str | None = None
     ) -> None:
         self.result.trace.append(FollowTrace(self.index, path, steps, error, node))
-
-
-class RenderedRequest(NamedTuple):
-    method: str
-    url: str
-    headers: dict[str, str]
-    body: str | None
-
-
-def render_request(
-    template: RequestTemplate,
-    value: Any,
-    ctx: PipeContext,
-    names: Mapping[str, Any] | None = None,
-) -> RenderedRequest:
-    """No template `url:` means `value` is the URL; relative URLs resolve against `ctx.url`."""
-
-    def fill(source: str) -> str:
-        return render(source, value, ctx, names)
-
-    def fill_native(source: str) -> Any:
-        return render_native(source, value, ctx, names)
-
-    if template.url is not None:
-        url = fill(template.url)
-    elif isinstance(value, str):
-        url = value
-    else:
-        raise ValueError(f"selected value is not a URL: {value!r}")
-    headers = {name: fill(v) for name, v in template.headers.items()}
-    body = None
-    if template.json_body is not None:
-        body = json.dumps(_render_json(template.json_body, fill_native))
-        _default_content_type(headers, "application/json")
-    elif template.form is not None:
-        body = urlencode({name: fill(v) for name, v in template.form.items()})
-        _default_content_type(headers, "application/x-www-form-urlencoded")
-    elif template.body is not None:
-        body = fill(template.body)
-    return RenderedRequest(template.method, urljoin(ctx.url or "", url), headers, body)
-
-
-def _render_json(value: Any, fill: Callable[[str], Any]) -> Any:
-    """Keys stay as written: they're the API's field names, not data."""
-    if isinstance(value, str):
-        return fill(value)
-    if isinstance(value, dict):
-        return {key: _render_json(v, fill) for key, v in value.items()}
-    if isinstance(value, list):
-        return [_render_json(v, fill) for v in value]
-    return value
-
-
-def _default_content_type(headers: dict[str, str], content_type: str) -> None:
-    if not any(name.lower() == "content-type" for name in headers):
-        headers["Content-Type"] = content_type

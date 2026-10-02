@@ -6,9 +6,10 @@ import yaml
 from parsel import Selector
 
 from groceries_scraper.config.models import PageType
-from groceries_scraper.engine.follow import FollowRequest, FollowResult, rerender
+from groceries_scraper.engine.follow import FollowRequest, FollowResult
 from groceries_scraper.engine.page import evaluate_page
 from groceries_scraper.engine.pipe import PipeContext
+from groceries_scraper.engine.request import RenderedRequest
 
 URL = "https://shop.example/c/dairy?page=1"
 
@@ -38,10 +39,7 @@ def test_pagination_rule_targets_its_own_page_type() -> None:
 
     assert result.requests == [
         FollowRequest(
-            method="GET",
-            url="https://shop.example/c/dairy?page=2",
-            headers={},
-            body=None,
+            RenderedRequest("GET", "https://shop.example/c/dairy?page=2"),
             page_type="listing",
             variables={},
             parent_ref=7,
@@ -59,7 +57,7 @@ def test_page_scope_follows_every_selected_value_with_inherited_variables() -> N
 
     result = _follow(page, Selector(text=LISTING), ctx)
 
-    assert [(r.url, r.variables) for r in result.requests] == [
+    assert [(r.request.url, r.variables) for r in result.requests] == [
         ("https://shop.example/p/a1", {"category": "Dairy"}),
         ("https://shop.example/p/b2", {"category": "Dairy"}),
     ]
@@ -83,7 +81,7 @@ def test_each_scope_passes_per_tile_variables_to_the_matching_child_request() ->
 
     result = _follow(page, Selector(text=LISTING), ctx)
 
-    assert [(r.url, r.variables) for r in result.requests] == [
+    assert [(r.request.url, r.variables) for r in result.requests] == [
         (
             "https://shop.example/p/a1",
             {
@@ -107,7 +105,7 @@ def test_each_scope_passes_per_tile_variables_to_the_matching_child_request() ->
     ]
 
 
-def test_rerender_uses_new_session_variables_and_keeps_the_rest() -> None:
+def test_with_session_rerenders_with_new_session_variables_and_keeps_the_rest() -> None:
     page = """
     follow:
       - select: {css: "a.tile-link::attr(href)"}
@@ -124,15 +122,16 @@ def test_rerender_uses_new_session_variables_and_keeps_the_rest() -> None:
     ctx = PipeContext(url=URL, session={"csrf": "old"})
     original = _follow(page, Selector(text=LISTING), ctx).requests[0]
 
-    retried = rerender(original, {"csrf": "new"})
+    retried = original.with_session({"csrf": "new"})
 
-    assert retried == replace(original, headers={**original.headers, "X-CSRF-Token": "new"})
+    headers = {**original.request.headers, "X-CSRF-Token": "new"}
+    assert retried == replace(original, request=replace(original.request, headers=headers))
 
 
-def test_rerender_leaves_a_request_without_a_template_unchanged() -> None:
-    start = FollowRequest("GET", URL, {}, None, "listing", {}, None)
+def test_with_session_leaves_a_request_without_a_template_unchanged() -> None:
+    start = FollowRequest(RenderedRequest("GET", URL), "listing", {}, None)
 
-    assert rerender(start, {"csrf": "new"}) == start
+    assert start.with_session({"csrf": "new"}) == start
 
 
 def test_post_json_template_renders_session_variables_and_passed_variables() -> None:
@@ -156,17 +155,22 @@ def test_post_json_template_renders_session_variables_and_passed_variables() -> 
 
     first, second = _follow(page, Selector(text=LISTING), ctx).requests
 
-    assert first.method == "POST"
-    assert first.url == "https://shop.example/api/product"
-    assert first.headers == {
+    assert first.request.method == "POST"
+    assert first.request.url == "https://shop.example/api/product"
+    assert first.request.headers == {
         "X-CSRF-Token": "tok",
         "X-Key": "k",
         "Content-Type": "application/json",
     }
-    assert first.body is not None
-    assert json.loads(first.body) == {"sku": "A1", "path": "/p/a1", "same": "/p/a1", "tags": ["A1"]}
+    assert first.request.body is not None
+    assert json.loads(first.request.body) == {
+        "sku": "A1",
+        "path": "/p/a1",
+        "same": "/p/a1",
+        "tags": ["A1"],
+    }
     assert first.variables == {"sku": "A1"}
-    assert json.loads(second.body or "")["sku"] == "B2"
+    assert json.loads(second.request.body or "")["sku"] == "B2"
 
 
 def test_form_and_raw_body_templates() -> None:
@@ -183,9 +187,13 @@ def test_form_and_raw_body_templates() -> None:
 
     form, raw = _follow(page, {"next": "2"}).requests
 
-    assert (form.url, form.body) == ("https://shop.example/c/2", "page=2")
-    assert form.headers == {"Content-Type": "application/x-www-form-urlencoded"}
-    assert (raw.url, raw.body, raw.headers) == ("https://shop.example/search", "page=2", {})
+    assert (form.request.url, form.request.body) == ("https://shop.example/c/2", "page=2")
+    assert form.request.headers == {"Content-Type": "application/x-www-form-urlencoded"}
+    assert (raw.request.url, raw.request.body, raw.request.headers) == (
+        "https://shop.example/search",
+        "page=2",
+        {},
+    )
 
 
 def test_rendering_error_is_traced_and_other_rules_still_follow() -> None:
@@ -200,7 +208,7 @@ def test_rendering_error_is_traced_and_other_rules_still_follow() -> None:
 
     result = _follow(page, Selector(text=LISTING))
 
-    assert [r.url for r in result.requests] == ["https://shop.example/c/dairy?page=2"]
+    assert [r.request.url for r in result.requests] == ["https://shop.example/c/dairy?page=2"]
     [error] = [t for t in result.trace if t.error]
     assert (error.rule, error.path) == (0, "request")
     assert error.error is not None and "missing" in error.error
@@ -255,7 +263,7 @@ def test_json_value_that_is_one_expression_keeps_its_native_type() -> None:
 
     [request] = _follow(page, {"next": "/n", "page": 2, "sale": True, "text": "3"}).requests
 
-    assert json.loads(request.body or "") == {
+    assert json.loads(request.request.body or "") == {
         "page": 2,
         "sale": True,
         "text": "3",

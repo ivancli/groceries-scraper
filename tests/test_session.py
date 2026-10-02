@@ -4,7 +4,8 @@ import yaml
 
 from groceries_scraper.config.models import SetupStep
 from groceries_scraper.engine.pipe import PipeContext
-from groceries_scraper.engine.session import Refresh, SessionRefresh, evaluate_setup, setup_request
+from groceries_scraper.engine.request import RequestSource
+from groceries_scraper.engine.session import RefreshAction, SessionRefresh, evaluate_setup
 
 HOME = b'<html><head><meta name="csrf-token" content="t0k"></head></html>'
 
@@ -56,8 +57,21 @@ def test_setup_fails_when_a_session_variable_has_no_value() -> None:
 
     assert result.error == "Session Variable `csrf` has no value"
     assert result.session == {}
-    [trace] = result.trace
-    assert (trace.name, trace.steps[0].output) == ("csrf", [])
+
+
+def test_a_failing_step_explains_why_a_session_variable_has_no_value() -> None:
+    step = _step("""
+    request: {url: "https://shop.example/"}
+    extract:
+      token: {jsonpath: "$.token"}
+    """)
+
+    result = evaluate_setup(step, 200, HOME, "text/html", PipeContext())
+
+    assert result.error == (
+        "Session Variable `token` has no value: "
+        "jsonpath needs a JSON Scope, got HTML (add `parse: json`)"
+    )
 
 
 def test_setup_fails_on_an_unparseable_json_response() -> None:
@@ -79,7 +93,7 @@ def test_setup_request_renders_earlier_session_variables_and_env() -> None:
     """)
     ctx = PipeContext(session={"csrf": "t0k", "n": 2}, env={"KEY": "k"})
 
-    request = setup_request(step, ctx)
+    request = RequestSource(step.request, None, ctx).render()
 
     assert request.method == "POST"
     assert request.url == "https://shop.example/api/session"
@@ -90,32 +104,32 @@ def test_setup_request_renders_earlier_session_variables_and_env() -> None:
 def test_a_status_outside_refresh_on_proceeds() -> None:
     refresh = SessionRefresh(refresh_on=[419], max_refresh=1)
 
-    assert refresh.on_status(200, refresh.generation) is Refresh.PROCEED
-    assert refresh.on_status(404, refresh.generation) is Refresh.PROCEED
+    assert refresh.on_status(200, refresh.generation) is RefreshAction.PROCEED
+    assert refresh.on_status(404, refresh.generation) is RefreshAction.PROCEED
 
 
 def test_a_refresh_status_refreshes_then_retries_requests_sent_with_the_old_session() -> None:
     refresh = SessionRefresh(refresh_on=[403, 419], max_refresh=1)
     sent_with = refresh.generation
 
-    assert refresh.on_status(419, sent_with) is Refresh.REFRESH
-    assert refresh.on_status(403, sent_with) is Refresh.WAIT  # Setup is still running
+    assert refresh.on_status(419, sent_with) is RefreshAction.REFRESH
+    assert refresh.on_status(403, sent_with) is RefreshAction.WAIT  # Setup is still running
     refresh.refreshed()
-    assert refresh.on_status(419, sent_with) is Refresh.RETRY  # already refreshed
+    assert refresh.on_status(419, sent_with) is RefreshAction.RETRY  # already refreshed
     assert refresh.refreshes == 1
 
 
 def test_refreshing_stops_at_max_refresh() -> None:
     refresh = SessionRefresh(refresh_on=[419], max_refresh=1)
-    assert refresh.on_status(419, refresh.generation) is Refresh.REFRESH
+    assert refresh.on_status(419, refresh.generation) is RefreshAction.REFRESH
     refresh.refreshed()
 
-    assert refresh.on_status(419, refresh.generation) is Refresh.GIVE_UP
-    assert refresh.on_status(419, refresh.generation) is Refresh.GIVE_UP
+    assert refresh.on_status(419, refresh.generation) is RefreshAction.GIVE_UP
+    assert refresh.on_status(419, refresh.generation) is RefreshAction.GIVE_UP
     assert refresh.refreshes == 1
 
 
 def test_max_refresh_zero_never_refreshes() -> None:
     refresh = SessionRefresh(refresh_on=[419], max_refresh=0)
 
-    assert refresh.on_status(419, refresh.generation) is Refresh.GIVE_UP
+    assert refresh.on_status(419, refresh.generation) is RefreshAction.GIVE_UP
