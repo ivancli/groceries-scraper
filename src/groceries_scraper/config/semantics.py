@@ -1,6 +1,5 @@
 """Semantic checks a schema can't express: cross-references, Scope types, Variable flow."""
 
-import importlib
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -11,12 +10,15 @@ from jinja2 import TemplateSyntaxError, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config.models import (
+    STEP_KINDS,
     TEMPLATE_NAMES,
     FieldSpec,
     PageType,
     Pipe,
     RequestTemplate,
     Site,
+    Step,
+    resolve_fn,
 )
 
 
@@ -30,25 +32,14 @@ class Findings:
 
 def check_site(site: Site) -> Findings:
     findings = Findings()
-    for i, start in enumerate(site.start):
-        _check_ref(site, findings, f"start[{i}].page_type", start.page_type)
-    for name, page_type in site.page_types.items():
-        for j, rule in enumerate(page_type.follow):
-            _check_ref(site, findings, f"page_types.{name}.follow[{j}].page_type", rule.page_type)
+    _check_refs(site, findings)
     reachable = _reachable(site)
+    session = _check_session_setup(site, findings)
     incoming = _incoming_variables(site, reachable)
-    setup = site.session.setup if site.session else []
-    session = frozenset(name for step in setup for name in step.extract)
-    for i, step in enumerate(setup):
-        earlier = frozenset(name for s in setup[:i] for name in s.extract)
-        checker = _Checker(findings, f"session.setup[{i}]", _no_variables, earlier)
-        checker.request(f"session.setup[{i}].request", step.request, frozenset())
-        for name, pipe in step.extract.items():
-            checker.pipe(f"session.setup[{i}].extract.{name}", pipe, None, False)
     for name, page_type in site.page_types.items():
-        missing = _missing_via(name, incoming[name]) if name in reachable else None
-        _Checker(findings, f"page_types.{name}", missing, session).check(page_type)
-    _check_records(site, findings)
+        why = _why_unpassed(name, incoming[name]) if name in reachable else None
+        _Checker(findings, f"page_types.{name}", why, session).check(page_type)
+    _check_records(site, findings, reachable)
     findings.warnings += [
         f"page_types.{name}: unreachable from any Start Request"
         for name in site.page_types
@@ -57,25 +48,56 @@ def check_site(site: Site) -> Findings:
     return findings
 
 
-def _check_ref(site: Site, findings: Findings, path: str, page_type: str) -> None:
-    if page_type not in site.page_types:
-        findings.errors.append(f"{path}: unknown Page Type `{page_type}`")
+def _check_refs(site: Site, findings: Findings) -> None:
+    refs = [(f"start[{i}].page_type", start.page_type) for i, start in enumerate(site.start)]
+    refs += [
+        (f"page_types.{name}.follow[{j}].page_type", rule.page_type)
+        for name, page_type in site.page_types.items()
+        for j, rule in enumerate(page_type.follow)
+    ]
+    findings.errors += [
+        f"{path}: unknown Page Type `{target}`"
+        for path, target in refs
+        if target not in site.page_types
+    ]
 
 
-def _check_records(site: Site, findings: Findings) -> None:
+def _check_session_setup(site: Site, findings: Findings) -> frozenset[str]:
+    """Returns the Session Variables it sets; each step sees only earlier steps' ones."""
+    setup = site.session.setup if site.session else []
+    session: frozenset[str] = frozenset()
+    for i, step in enumerate(setup):
+        checker = _Checker(findings, f"session.setup[{i}]", _not_in_setup, session)
+        checker.request(f"session.setup[{i}].request", step.request, frozenset())
+        for name, pipe in step.extract.items():
+            checker.pipe(f"session.setup[{i}].extract.{name}", pipe, None, False)
+        session = session.union(step.extract)
+    return session
+
+
+def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
+    # Unreachable Page Types never run, so they can't satisfy a Record Type.
     emitters = defaultdict(list)
-    for name, page_type in site.page_types.items():
-        if page_type.record is not None:
-            emitters[page_type.record].append(name)
-    for record_type, spec in site.records.items():
-        if record_type not in emitters:
-            findings.errors.append(f"records.{record_type}: {_not_emitted(record_type)}")
-        for i, key in enumerate(spec.key):
-            findings.errors += [
-                f"records.{record_type}.key[{i}]: Page Type `{name}` has no Field `{key}`"
-                for name in emitters[record_type]
-                if key not in site.page_types[name].fields
-            ]
+    for name in reachable:
+        if (record_type := site.page_types[name].record) is not None:
+            emitters[record_type].append(name)
+    findings.errors += [
+        f"records.{record_type}: {_not_emitted(record_type)}"
+        for record_type in site.records
+        if record_type not in emitters
+    ]
+    findings.errors += [
+        f"page_types.{name}.record: Record Type `{page_type.record}` is not declared in `records:`"
+        for name, page_type in site.page_types.items()
+        if page_type.record is not None and page_type.record not in site.records
+    ]
+    findings.errors += [
+        f"records.{record_type}.key[{i}]: Page Type `{name}` has no Field `{key}`"
+        for record_type, spec in site.records.items()
+        for i, key in enumerate(spec.key)
+        for name in sorted(emitters[record_type])
+        if key not in site.page_types[name].fields
+    ]
     findings.errors += [
         f"health.min_records.{record_type}: {_not_emitted(record_type)}"
         for record_type in site.health.min_records
@@ -90,7 +112,7 @@ def _check_records(site: Site, findings: Findings) -> None:
 
 
 def _not_emitted(record_type: str) -> str:
-    return f"no Page Type emits Record Type `{record_type}`"
+    return f"no reachable Page Type emits Record Type `{record_type}`"
 
 
 def _reachable(site: Site) -> set[str]:
@@ -136,11 +158,11 @@ def _incoming_variables(site: Site, reachable: set[str]) -> dict[str, list[Edge]
         available = updated
 
 
-Missing = Callable[[str], str | None]  # Variable name -> why it's unavailable, or None
+WhyUnavailable = Callable[[str], str | None]  # Variable name -> the error, or None if available
 
 
-def _missing_via(page_type: str, edges: list[Edge]) -> Missing:
-    def missing(name: str) -> str | None:
+def _why_unpassed(page_type: str, edges: list[Edge]) -> WhyUnavailable:
+    def why(name: str) -> str | None:
         via = [path for path, variables in edges if name not in variables]
         if not via:
             return None
@@ -149,18 +171,19 @@ def _missing_via(page_type: str, edges: list[Edge]) -> Missing:
             f"(missing via {', '.join(via)})"
         )
 
-    return missing
+    return why
 
 
-def _no_variables(name: str) -> str:
+def _not_in_setup(name: str) -> str:
     return f"Variable `{name}` is not available in Session Setup"
 
 
 # --- Pipes ------------------------------------------------------------------
 
 # What a Step yields, as far as config can tell; None is unknown and never flagged.
-Scope = Literal["HTML", "JSON", "text"] | None
+ValueKind = Literal["HTML", "JSON", "text"] | None
 
+_SELECTOR_KINDS = ("css", "xpath", "jsonpath")
 _TEXT_KINDS = (
     "regex",
     "replace",
@@ -172,13 +195,23 @@ _TEXT_KINDS = (
     "urljoin",
     "template",
 )
+_ANY_KINDS = ("var", "fn")
+# A Step kind validation doesn't know would silently skip its checks.
+assert {*_SELECTOR_KINDS, *_TEXT_KINDS, *_ANY_KINDS, "parse"} == set(STEP_KINDS)
+
 # `/` or `//` at the start, optionally inside a parenthesised group: `(//a)[1]`.
 _ABSOLUTE_XPATH = re.compile(r"\s*(\(\s*)*/")
-_HINTS: dict[tuple[Scope, Scope], str] = {
+# Selectors whose matches the engine returns as strings, not nodes (see `_node_or_text`).
+_CSS_TEXT = re.compile(r"::(text|attr\([^)]*\))\s*$")
+_XPATH_TEXT = re.compile(
+    r"((^|/)\s*@[\w:.*-]+|/\s*text\(\s*\))\s*$"
+    r"|^\s*(count|string|normalize-space|concat|substring[\w-]*|string-length|sum|number"
+    r"|boolean|translate|name|local-name)\s*\(",
+)
+_HINTS: dict[tuple[ValueKind, ValueKind], str] = {
     ("HTML", "JSON"): " (add `parse: html`)",
     ("JSON", "HTML"): " (add `parse: json`)",
 }
-
 
 _JINJA = SandboxedEnvironment()
 
@@ -187,24 +220,23 @@ _JINJA = SandboxedEnvironment()
 class _Checker:
     findings: Findings
     path: str
-    missing: Missing | None  # None: unreachable, so no Variables to check against
+    why_unavailable: WhyUnavailable | None  # None: unreachable, so no Variables to check
     session: frozenset[str]  # Session Variables set by Session Setup
 
     def check(self, page_type: PageType) -> None:
-        page: Scope = "JSON" if page_type.response == "json" else "HTML"
-        node, looped = page, page_type.items is not None
+        page_kind: ValueKind = "JSON" if page_type.response == "json" else "HTML"
+        loop_kind, looped = page_kind, page_type.items is not None
         if page_type.items is not None:
-            node = self.pipe(f"{self.path}.items.each", page_type.items.each, page, False)
-        self._fields(f"{self.path}.fields", page_type.fields, node, looped)
+            loop_kind = self.pipe(f"{self.path}.items.each", page_type.items.each, page_kind, False)
+        self._fields(f"{self.path}.fields", page_type.fields, loop_kind, looped)
         for j, rule in enumerate(page_type.follow):
             path, each = f"{self.path}.follow[{j}]", rule.scope == "each"
-            scope = node if each else page
-            self.pipe(f"{path}.select", rule.select, scope, each)
+            kind = loop_kind if each else page_kind
+            self.pipe(f"{path}.select", rule.select, kind, each)
             for name, pipe in rule.pass_.items():
-                self.pipe(f"{path}.pass.{name}", pipe, scope, each)
+                self.pipe(f"{path}.pass.{name}", pipe, kind, each)
             if rule.request is not None:
-                local = frozenset([*rule.pass_, *([rule.as_] if rule.as_ else [])])
-                self.request(f"{path}.request", rule.request, local)
+                self.request(f"{path}.request", rule.request, rule.template_names)
 
     def request(self, path: str, template: RequestTemplate, local: frozenset[str]) -> None:
         """`local`: names only this request's templates see (the rule's `pass:` and `as:`)."""
@@ -220,51 +252,60 @@ class _Checker:
             self._template(source_path, source, local)
 
     def _fields(
-        self, prefix: str, specs: dict[str, FieldSpec], scope: Scope, in_loop: bool
+        self, prefix: str, specs: dict[str, FieldSpec], kind: ValueKind, in_loop: bool
     ) -> None:
         for name, spec in specs.items():
             path = f"{prefix}.{name}"
             if spec.each:
-                node = self.pipe(f"{path}.each", spec.each, scope, in_loop)
-                self._fields(f"{path}.fields", spec.fields, node, True)
+                node_kind = self.pipe(f"{path}.each", spec.each, kind, in_loop)
+                self._fields(f"{path}.fields", spec.fields, node_kind, True)
             else:
-                value = self.pipe(path, spec.pipe, scope, in_loop)
-                self._fields(f"{path}.fields", spec.fields, value, in_loop)
+                value_kind = self.pipe(path, spec.pipe, kind, in_loop)
+                self._fields(f"{path}.fields", spec.fields, value_kind, in_loop)
 
-    def pipe(self, path: str, pipe: Pipe, scope: Scope, in_loop: bool) -> Scope:
+    def pipe(self, path: str, pipe: Pipe, kind: ValueKind, in_loop: bool) -> ValueKind:
         """A single Step is addressed without an index, matching its shorthand in the YAML."""
         for i, step in enumerate(pipe):
             step_path = path if len(pipe) == 1 else f"{path}[{i}]"
-            if step.kind in ("css", "xpath"):
-                self._expect(step_path, step.kind, "HTML", scope)
-                scope = "HTML"
-                if (
-                    in_loop
-                    and step.xpath
-                    and _ABSOLUTE_XPATH.match(step.xpath)
-                    and not step.absolute
-                ):
-                    self._error(
-                        step_path,
-                        "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`",
-                    )
-            elif step.kind == "jsonpath":
-                self._expect(step_path, step.kind, "JSON", scope)
-                scope = "JSON"
+            if step.kind in _SELECTOR_KINDS:
+                kind = self._selector(step_path, step, kind, in_loop)
             elif step.kind == "parse":
-                scope = "JSON" if step.parse == "json" else "HTML"
+                kind = "JSON" if step.parse == "json" else "HTML"
                 in_loop = False  # a fresh document: `//` is relative to it
             elif step.kind in _TEXT_KINDS:
                 if step.template is not None:
                     self._template(step_path, step.template, frozenset())
-                scope = "text"
-            else:  # var, fn: any value
+                kind = "text"
+            else:  # _ANY_KINDS
                 if step.var is not None:
                     self._variable(step_path, step.var)
-                if step.fn is not None and (reason := _unresolvable(step.fn)):
-                    self._error(step_path, reason)
-                scope = None
-        return scope
+                if step.fn is not None:
+                    self._fn(step_path, step.fn)
+                kind = None
+        return kind
+
+    def _selector(self, path: str, step: Step, kind: ValueKind, in_loop: bool) -> ValueKind:
+        if step.jsonpath is not None:
+            self._expect(path, "jsonpath", "JSON", kind)
+            return "JSON"
+        self._expect(path, step.kind, "HTML", kind)
+        if step.css is not None:
+            return "text" if _CSS_TEXT.search(step.css) else "HTML"
+        assert step.xpath is not None
+        branches = _xpath_branches(step.xpath)
+        if in_loop and not step.absolute and any(_ABSOLUTE_XPATH.match(b) for b in branches):
+            self._error(
+                path, "absolute XPath inside a Loop Scope; use `.//` or set `absolute: true`"
+            )
+        if len(branches) > 1:
+            return None  # a union may mix nodes and text
+        return "text" if _XPATH_TEXT.search(step.xpath) else "HTML"
+
+    def _fn(self, path: str, ref: str) -> None:
+        try:
+            resolve_fn(ref)
+        except Exception as exc:  # any import-time failure would also break the Run
+            self._error(path, f"cannot load `{ref}`: {type(exc).__name__}: {exc}")
 
     def _template(self, path: str, source: str, local: frozenset[str]) -> None:
         try:
@@ -286,17 +327,35 @@ class _Checker:
         if name.startswith("session."):
             if name.removeprefix("session.") not in self.session:
                 self._error(path, f"Session Variable `{name}` is not set by Session Setup")
-        elif self.missing is not None and (reason := self.missing(name)):
+        elif self.why_unavailable is not None and (reason := self.why_unavailable(name)):
             self._error(path, reason)
 
-    def _expect(self, path: str, kind: str, wanted: Scope, scope: Scope) -> None:
-        if scope is not None and scope != wanted:
+    def _expect(self, path: str, kind: str, wanted: ValueKind, got: ValueKind) -> None:
+        if got is not None and got != wanted:
             a = "an" if wanted == "HTML" else "a"
-            hint = _HINTS.get((wanted, scope), "")
-            self._error(path, f"{kind} needs {a} {wanted} Scope, got {scope}{hint}")
+            hint = _HINTS.get((wanted, got), "")
+            self._error(path, f"{kind} needs {a} {wanted} Scope, got {got}{hint}")
 
     def _error(self, path: str, message: str) -> None:
         self.findings.errors.append(f"{path}: {message}")
+
+
+def _xpath_branches(xpath: str) -> list[str]:
+    """Splits a union on top-level `|`, ignoring any inside brackets or string literals."""
+    branches, start, depth, quote = [], 0, 0, ""
+    for i, char in enumerate(xpath):
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        elif char == "|" and depth == 0:
+            branches.append(xpath[start:i])
+            start = i + 1
+    return [*branches, xpath[start:]]
 
 
 def _session_key(node: nodes.Node) -> str | None:
@@ -319,17 +378,3 @@ def _json_strings(path: str, value: Any) -> Iterable[tuple[str, str]]:
     elif isinstance(value, list):
         for i, item in enumerate(value):
             yield from _json_strings(f"{path}[{i}]", item)
-
-
-def _unresolvable(ref: str) -> str | None:
-    """Resolves `module:callable` as the engine will, so a typo fails before a Run."""
-    module_name, _, name = ref.partition(":")
-    try:
-        module = importlib.import_module(module_name)
-    except Exception as exc:  # any import-time failure would also break the Run
-        return f"cannot import `{module_name}`: {exc}"
-    if not hasattr(module, name):
-        return f"`{module_name}` has no attribute `{name}`"
-    if not callable(getattr(module, name)):
-        return f"`{ref}` is not callable"
-    return None

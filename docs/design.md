@@ -43,7 +43,7 @@ session:                       # Session Setup — runs before Start Requests
 replay:
   ignore_params: [_ts, csrf]   # excluded from request fingerprint
 
-records:                       # Record Types + Record Keys
+records:                       # every emitted Record Type; `key:` (Record Key) optional
   product: {key: [sku]}
 
 health:

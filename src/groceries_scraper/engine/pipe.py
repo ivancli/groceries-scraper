@@ -1,6 +1,5 @@
 """Pipe evaluation. A Scope is a parsel `Selector` (HTML) or any other value (JSON)."""
 
-import importlib
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -15,7 +14,7 @@ from jsonpath_ng import JSONPath
 from jsonpath_ng.ext import parse as parse_jsonpath
 from parsel import Selector
 
-from groceries_scraper.config.models import Pipe, Step
+from groceries_scraper.config.models import STEP_KINDS, Pipe, Step, resolve_fn
 
 
 @dataclass(frozen=True)
@@ -231,11 +230,7 @@ def plain(value: Any) -> Any:
     return _text(value, "template") if isinstance(value, Selector) else value
 
 
-@cache
-def _resolved_fn(ref: str) -> Callable[[Any, PipeContext], Any]:
-    module, _, name = ref.partition(":")
-    fn: Callable[[Any, PipeContext], Any] = getattr(importlib.import_module(module), name)
-    return fn
+_resolved_fn = cache(resolve_fn)
 
 
 def _fn(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
@@ -261,3 +256,4 @@ _STEPS: dict[str, Callable[[Step, list[Any], PipeContext], list[Any]]] = {
     "template": _template,
     "fn": _fn,
 }
+assert set(_STEPS) == set(STEP_KINDS)  # a new Step kind needs an implementation here
