@@ -19,6 +19,12 @@ extract:
   csrf: {css: "meta[name=csrf-token]::attr(content)"}
 """
 
+JSON_STEP = """
+request: {url: "https://shop.example/api/session"}
+extract:
+  token: {jsonpath: "$.token"}
+"""
+
 
 def test_setup_extracts_session_variables_from_html() -> None:
     result = evaluate_setup(_step(CSRF_STEP), 200, HOME, "text/html", PipeContext())
@@ -28,11 +34,7 @@ def test_setup_extracts_session_variables_from_html() -> None:
 
 
 def test_setup_reads_a_json_response_by_its_content_type() -> None:
-    step = _step("""
-    request: {url: "https://shop.example/api/session"}
-    extract:
-      token: {jsonpath: "$.token"}
-    """)
+    step = _step(JSON_STEP)
     body = json.dumps({"token": 42}).encode()
 
     result = evaluate_setup(step, 200, body, "application/json; charset=utf-8", PipeContext())
@@ -59,11 +61,7 @@ def test_setup_fails_when_a_session_variable_has_no_value() -> None:
 
 
 def test_setup_fails_on_an_unparseable_json_response() -> None:
-    step = _step("""
-    request: {url: "https://shop.example/api/session"}
-    extract:
-      token: {jsonpath: "$.token"}
-    """)
+    step = _step(JSON_STEP)
 
     result = evaluate_setup(step, 200, b"<html>", "application/json", PipeContext())
 

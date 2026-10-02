@@ -4,11 +4,11 @@ import codecs
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from parsel import Selector
 
-from groceries_scraper.config.models import PageType
+from groceries_scraper.config.models import PageType, ScopeKind
 from groceries_scraper.engine.extract import ExtractionResult, extract
 from groceries_scraper.engine.follow import FollowResult, follow
 from groceries_scraper.engine.pipe import PipeContext, StepTrace, run_pipe
@@ -49,7 +49,7 @@ def evaluate_page(
 _CHARSET = re.compile(r"charset=[\"']?([\w.:-]+)", re.I)
 
 
-def parse_scope(response: Literal["html", "json"], body: bytes, content_type: str | None) -> Any:
+def parse_scope(response: ScopeKind, body: bytes, content_type: str | None) -> Any:
     if response == "json":
         return json.loads(body)  # detects UTF-8/16/32 itself
     return Selector(text=body.decode(_charset(content_type), errors="replace"))

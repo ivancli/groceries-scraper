@@ -39,7 +39,7 @@ class RequestSource:
 
 
 def rerender(request: FollowRequest, session: Mapping[str, Any]) -> FollowRequest:
-    """The same request rendered with new Session Variables, e.g. after a Session refresh."""
+    """Retries after a Session refresh must carry the new Session Variables."""
     if request.source is None:
         return request
     source = replace(request.source, ctx=replace(request.source.ctx, session=session))

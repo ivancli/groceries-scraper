@@ -22,8 +22,16 @@ from groceries_scraper.engine.session import (
     setup_request,
 )
 
-# Close reason (and stats key) for a Run whose Session Setup failed; Run Health reads it.
+# Close reason and stats key for Run Health.
 SESSION_SETUP_FAILED = "session_setup_failed"
+
+
+_ERROR_STATUSES = list(range(400, 600))
+
+
+def _content_type(response: Response) -> str | None:
+    value = response.headers.get("Content-Type")
+    return value.decode("latin-1") if value else None
 
 
 class SiteSpider(scrapy.Spider):
@@ -55,7 +63,7 @@ class SiteSpider(scrapy.Spider):
         for follow in starts:
             yield self._request(follow)
 
-    def _request(self, follow: FollowRequest, retry: bool = False) -> scrapy.Request:
+    def _request(self, follow: FollowRequest, resend: bool = False) -> scrapy.Request:
         meta: dict[str, Any] = {}
         if self._refresh is not None:
             meta["handle_httpstatus_list"] = sorted(self._refresh.refresh_on)
@@ -67,7 +75,7 @@ class SiteSpider(scrapy.Spider):
             callback=self._on_response,
             cb_kwargs={"follow": follow, "generation": self._generation},
             meta=meta,
-            dont_filter=retry,  # a retry has the original's fingerprint
+            dont_filter=resend,  # held or retried: the dupe filter has seen it
         )
 
     @property
@@ -83,11 +91,10 @@ class SiteSpider(scrapy.Spider):
                 yield from self._on_refresh_status(action, response, follow)
                 return
         capture_no = next(self._capture_nos)
-        content_type = response.headers.get("Content-Type")
         result = evaluate_response(
             self.site.page_types[follow.page_type],
             response.body,
-            content_type.decode("latin-1") if content_type else None,
+            _content_type(response),
             PipeContext(
                 variables=follow.variables, session=self._session, env=self.env, url=response.url
             ),
@@ -110,7 +117,7 @@ class SiteSpider(scrapy.Spider):
         elif action is Refresh.WAIT:
             self._waiting.append(follow)
         elif action is Refresh.RETRY:
-            yield self._request(rerender(follow, self._session), retry=True)
+            yield self._request(rerender(follow, self._session), resend=True)
         else:
             self.logger.error(
                 "HTTP %d from %s: max_refresh (%d) reached; dropping the request",
@@ -123,7 +130,6 @@ class SiteSpider(scrapy.Spider):
     # --- Session Setup -------------------------------------------------------
 
     def _setup(self, index: int, session: dict[str, Any]) -> scrapy.Request:
-        """Steps run in order, each seeing the Session Variables extracted before it."""
         assert self.site.session is not None
         step = self.site.session.setup[index]
         try:
@@ -138,7 +144,7 @@ class SiteSpider(scrapy.Spider):
             callback=self._on_setup,
             errback=self._on_setup_error,
             cb_kwargs={"index": index, "session": session},
-            meta={"handle_httpstatus_all": True},
+            meta={"handle_httpstatus_list": _ERROR_STATUSES},  # 3xx still redirect
             dont_filter=True,  # Setup re-runs on every refresh
         )
 
@@ -146,12 +152,11 @@ class SiteSpider(scrapy.Spider):
         self, response: Response, index: int, session: dict[str, Any]
     ) -> Iterator[scrapy.Request]:
         assert self.site.session is not None
-        content_type = response.headers.get("Content-Type")
         result = evaluate_setup(
             self.site.session.setup[index],
             response.status,
             response.body,
-            content_type.decode("latin-1") if content_type else None,
+            _content_type(response),
             PipeContext(session=session, env=self.env, url=response.url),
         )
         if result.error is not None:
@@ -165,7 +170,7 @@ class SiteSpider(scrapy.Spider):
         self._refresh.refreshed()
         waiting, self._waiting = self._waiting, []
         for follow in waiting:
-            yield self._request(rerender(follow, session), retry=True)
+            yield self._request(rerender(follow, session), resend=True)
 
     def _on_setup_error(self, failure: Failure) -> None:
         request = failure.request  # type: ignore[attr-defined]  # set by Scrapy for errbacks

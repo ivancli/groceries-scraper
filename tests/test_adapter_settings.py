@@ -4,6 +4,7 @@ import yaml
 
 from groceries_scraper.adapter.settings import RECORD_LIMIT, scrapy_settings
 from groceries_scraper.config import Site, parse_site
+from groceries_scraper.config.models import Session
 from groceries_scraper.run import Run
 
 DEFAULTS = {
@@ -45,3 +46,14 @@ def test_limit_closes_the_spider_after_n_records() -> None:
     assert "CLOSESPIDER_ITEMCOUNT" not in scrapy_settings(_site(), RUN)
     settings = scrapy_settings(_site(), RUN, limit=3)
     assert settings["CLOSESPIDER_ITEMCOUNT"] == settings[RECORD_LIMIT] == 3
+
+
+def test_refresh_statuses_refresh_the_session_instead_of_retrying_with_it() -> None:
+    site = _site().model_copy(
+        update={"session": Session.model_validate({"setup": [], "refresh_on": [419, 429]})}
+    )
+
+    codes = scrapy_settings(site, RUN)["RETRY_HTTP_CODES"]
+
+    assert 429 not in codes
+    assert 503 in codes

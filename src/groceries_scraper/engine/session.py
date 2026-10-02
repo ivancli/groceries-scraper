@@ -60,8 +60,7 @@ class Refresh(Enum):
 
 
 class SessionRefresh:
-    """When to re-run Session Setup. `generation` tags which Session a request was sent with,
-    so concurrent failures from one stale Session cost a single refresh."""
+    """`generation` tags a request's Session, so failures from one stale Session refresh once."""
 
     def __init__(self, refresh_on: Iterable[int], max_refresh: int) -> None:
         self.refresh_on = frozenset(refresh_on)

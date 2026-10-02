@@ -61,7 +61,12 @@ class _Shop(BaseHTTPRequestHandler):
         self.server.paths.append(self.path)
         if url.path == "/robots.txt":
             self._send("text/plain", self.server.robots)
-        elif url.path == "/":
+        elif url.path == "/" and self.server.home_redirects:
+            self.send_response(302)
+            self.send_header("Location", "/home")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        elif url.path == ("/home" if self.server.home_redirects else "/"):
             self._home()
         elif url.path == "/c/dairy":
             page = int(parse_qs(url.query).get("page", ["1"])[0])
@@ -119,6 +124,7 @@ class _ShopServer(ThreadingHTTPServer):
     rotate_every = 0  # invalidate every token after this many products served
     served = 0
     home_status = 200
+    home_redirects = False  # `/` → `/home`, as localised homepages often do
 
 
 def _skus() -> list[str]:
@@ -277,6 +283,14 @@ def test_exceeding_max_refresh_stops_refreshing_and_is_reported(
     assert shop.paths.count("/") == 2
     assert "max_refresh (1) reached" in log
     assert "'session/refresh_exhausted': 2" in log
+
+
+def test_session_setup_follows_redirects(tmp_path: Path, shop: _ShopServer) -> None:
+    shop.csrf, shop.home_redirects = True, True
+
+    run_dir, _ = _run_with_log(tmp_path, shop, max_refresh=1)
+
+    assert len(_records(run_dir)) == len(_skus())
 
 
 def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer) -> None:
