@@ -1,0 +1,30 @@
+# Only the ALDI products listed under `start`, read from their product pages.
+site: aldi_picks
+settings:
+  download_delay: 1.0
+  record_level: all
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.aldi.com.au/product/aldi-natural-walnuts-500g-000000000000282420
+    page_type: product
+  - url: https://www.aldi.com.au/product/bon-appetit-chocolate-chip-brioche-milk-rolls-8-pack-280g-000000000000200998
+    page_type: product
+page_types:
+  product:
+    record: product
+    fields:
+      url: {xpath: "//link[@rel='canonical']/@href", type: string, required: true}
+      name: {css: "h1.product-details__title::text", type: string, required: true}
+      brand: {css: "a.product-details__brand-name::text", type: string}
+      price:
+        xpath: "translate(substring-after(//span[contains(@class,'base-price__regular')]/span[1], '$'), ',', '')"
+        type: number
+        required: true
+      currency: {template: AUD, type: string}
+      size: {xpath: "normalize-space(substring-before(//span[@data-test='product-details__unit-of-measurement'], '('))"}
+      unit_price: {xpath: "normalize-space(//span[contains(@class,'product-details__comparison-price')])"}
