@@ -210,6 +210,40 @@ A_RULE = {"select": {"css": "a::attr(href)"}, "page_type": "listing"}
             "Input should be 'http' or 'browser'",
             id="unknown-render",
         ),
+        pytest.param(
+            _site(records={"product": {"fields": {}}}),
+            "records.product.fields",
+            "Dictionary should have at least 1 item",
+            id="empty-contract",
+        ),
+        pytest.param(
+            _site(records={"product": {"fields": {"sku": {"required": True}}}}),
+            "records.product.fields.sku.type",
+            "Field required",
+            id="untyped-contract-field",
+        ),
+        pytest.param(
+            _site(records={"product": {"fields": {"tags": {"type": "array"}}}}),
+            "records.product.fields.tags",
+            "an array Field needs exactly one of `items` or `fields`",
+            id="contract-array-without-shape",
+        ),
+        pytest.param(
+            _site(
+                records={"p": {"fields": {"n": {"type": "object", "items": {"type": "string"}}}}}
+            ),
+            "records.p.fields.n",
+            "an object Field needs `fields`",
+            id="contract-object-without-fields",
+        ),
+        pytest.param(
+            _site(
+                records={"p": {"fields": {"n": {"type": "string", "items": {"type": "string"}}}}}
+            ),
+            "records.p.fields.n",
+            "`fields` and `items` need type object or array",
+            id="contract-scalar-with-items",
+        ),
     ],
 )
 def test_invalid_config_reports_yaml_path(data: dict[str, Any], path: str, message: str) -> None:

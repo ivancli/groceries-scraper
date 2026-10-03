@@ -293,8 +293,37 @@ class Replay(_Model):
     ignore_params: list[str] = Field(default_factory=list)
 
 
+class ContractField(_Model):
+    """A Field as a Record Type's contract declares it; an array of objects takes `fields`."""
+
+    type: FieldTypeName
+    required: bool = False
+    fields: dict[str, ContractField] = Field(default_factory=dict)
+    items: ContractField | None = None
+
+    @model_validator(mode="after")
+    def _shape_matches_type(self) -> ContractField:
+        if self.type == "array":
+            if (self.items is None) == (not self.fields):
+                raise _config_error("an array Field needs exactly one of `items` or `fields`")
+            if self.items is not None and (
+                self.items.type in ("object", "array") or self.items.model_fields_set - {"type"}
+            ):
+                raise _config_error("an array Field's `items` only takes a scalar `type`")
+        elif self.type == "object":
+            if not self.fields:
+                raise _config_error("an object Field needs `fields`")
+            if self.items is not None:
+                raise _config_error("`items` is only allowed on array Fields")
+        elif self.fields or self.items is not None:
+            raise _config_error("`fields` and `items` need type object or array")
+        return self
+
+
 class RecordType(_Model):
     key: list[str] = Field(default_factory=list)  # a Record Type has at most one Record Key
+    # None: no contract, so emitting Page Types aren't checked against one.
+    fields: Annotated[dict[str, ContractField], Field(min_length=1)] | None = None
 
 
 Ratio = Annotated[float, Field(ge=0, le=1)]

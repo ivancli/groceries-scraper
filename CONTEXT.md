@@ -40,6 +40,10 @@ _Avoid_: Entity, model, schema, item type
 The **Field**(s) that identify the same real-world thing across **Runs** (e.g. `sku`), declared per **Record Type**.
 _Avoid_: ID, primary key, unique key
 
+**Record Contract**:
+The Fields, types and required flags declared once for a **Record Type**, which every **Page Type** emitting it must match exactly.
+_Avoid_: Schema, model
+
 **Field**:
 A named, typed value in a **Record** (or nested object), with a selector describing where to find it.
 _Avoid_: Attribute, property, column
@@ -129,6 +133,7 @@ _Avoid_: Output, exporter, destination
 - A **Record** missing a required **Field** is dropped and the reason recorded in the **Extraction Trace**
 - A **Run** has many **Captures**; each **Capture** has one **Extraction Trace** and at most one parent **Capture**
 - A **Run** has exactly one **Run Health**, derived from the **Site**'s **Health Checks** plus built-in failure conditions
+- A **Record Type** has at most one **Record Contract**; with one, every emitting **Page Type** declares exactly its **Fields**
 - A **Record Type** has at most one **Record Key**; within a **Run** only the first **Record** per key is kept
 - Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
