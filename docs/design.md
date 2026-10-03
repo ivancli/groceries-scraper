@@ -15,7 +15,7 @@ src/groceries_scraper/
   config/                    # Pydantic models, loader, semantic validation
   engine/                    # PURE: pipes, steps, fields, follow rules, trace (no scrapy import)
   adapter/                   # Scrapy spider, capture/replay middleware, pipelines
-  run/                       # run directory, summary, health
+  run/                       # run directory, summary, health, diff, sinks
   cli.py                     # Typer app: validate | run | replay | inspect | fixture | diff
 tests/sites/<site>/          # Golden Fixtures (captures + expected records)
 runs/<site>/<run_id>/        # Run output (gitignored)
@@ -259,7 +259,8 @@ runs/<site>/<run_id>/
   network errors after retries, and refreshes given up; requests robots.txt disallowed
   are not counted. `max_null_ratio` checks each Record Type with that Field. Ratios with an
   empty denominator are 0; `max_*` checks breach only above their threshold.
-- `scrape run` ends with a short summary on stdout and exits with the Run Health's code.
+- `scrape run` ends with a short summary on stdout and exits with the Run Health's code,
+  or `3` when a non-failed Run could not be exported to a `--sink`.
 
 ## CLI
 
@@ -267,11 +268,12 @@ For installation and a runnable retailer example, see the [quickstart](../README
 
 ```
 scrape validate sites/<site>.yaml
-scrape run sites/<site>.yaml [--limit N] [--record all|errors|off]
-scrape replay runs/<site>/<run_id> [--config edited.yaml]
+scrape run sites/<site>.yaml [--limit N] [--record all|errors|off] [--sink URL ...]
+scrape replay runs/<site>/<run_id> [--config edited.yaml] [--sink URL ...]
 scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
 scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
+scrape export runs/<site>/<run_id> --sink URL [--sink URL ...] [--force]
 ```
 
 `diff` compares two Runs of one Site, per Record Type with a Record Key in either Run's
@@ -298,5 +300,22 @@ the fixture. The Site regression tests
 Replay each fixture against the current `sites/<site>.yaml` with network connections
 refused, comparing Records independently of crawl order and rejecting missing Captures.
 
+## Sinks
+
+The Run directory stays the primary output (`diff`, Replay and fixtures read it). A Sink
+receives a copy once the Run has finished, so blocking I/O stays out of the crawl and the
+export can be gated on Run Health: `failed` Runs are skipped unless `export --force`.
+Sinks are chosen per invocation with `--sink` (a deployment concern, not Site config);
+credentials come from the URL or the backend's usual environment. Each export replaces
+any earlier export of the same Run, so re-running `export` is safe. A failing Sink does
+not stop the others; errors name Sinks without credentials.
+
+- `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's `scrape_runs` row
+  (site, run_id, health, manifest) and its `scrape_records` rows
+  (record_type, record_key, data without `_meta`, meta). Tables are created if missing.
+- `s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`): mirrors `run.json` and
+  `records/*.jsonl` to `<prefix>/<site>/<run_id>/`, removing objects the Run no longer
+  has; `run.json` is uploaded last as the completion marker.
+
 ## Deferred (post-v1)
-Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · price history across many Runs · output sinks (DB/S3) · nightly live smoke runs.
+Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · price history across many Runs · nightly live smoke runs.

@@ -1302,3 +1302,38 @@ def test_a_browser_rendered_run_replays_offline_without_a_browser(
     assert sorted((c["page_type"], c.get("render", "")) for c in _captures(replay)) == sorted(
         (c["page_type"], c.get("render", "")) for c in _captures(source)
     )
+
+
+def test_an_unreachable_sink_exits_3_after_the_run_is_saved(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir, log = _run_with_log(
+        tmp_path, shop, "--sink", "postgres://user:secret@127.0.0.1:1/scrapes", exit_code=3
+    )
+
+    assert "health: ok" in log
+    assert "was not exported to postgres://127.0.0.1:1/scrapes:" in log
+    assert "secret" not in log
+    assert len(_records(run_dir)) == PAGES * PER_PAGE
+
+
+@pytest.mark.skipif(
+    "TEST_DATABASE_URL" not in os.environ, reason="set TEST_DATABASE_URL to a disposable database"
+)
+def test_run_exports_its_records_to_a_postgres_sink(tmp_path: Path, shop: _ShopServer) -> None:
+    import psycopg
+
+    dsn = os.environ["TEST_DATABASE_URL"]
+    with psycopg.connect(dsn, autocommit=True) as db:
+        db.execute("DROP TABLE IF EXISTS scrape_records, scrape_runs")
+
+    run_dir, log = _run_with_log(tmp_path, shop, "--sink", dsn)
+
+    assert f"Exported Run {run_dir.name}" in log
+    with psycopg.connect(dsn) as db:
+        rows = db.execute(
+            "SELECT record_key->>'sku', data->>'sku' FROM scrape_records"
+            " WHERE run_id = %s AND record_type = 'product' ORDER BY 1",
+            (run_dir.name,),
+        ).fetchall()
+    assert rows == [(sku, sku) for sku in sorted(_skus())]

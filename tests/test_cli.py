@@ -2,6 +2,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner, Result
 
@@ -17,11 +18,11 @@ def _design_example() -> str:
     return match.group(1)
 
 
-def test_help_lists_the_six_commands() -> None:
+def test_help_lists_the_seven_commands() -> None:
     result = CliRunner().invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    for command in ("validate", "run", "replay", "inspect", "fixture", "diff"):
+    for command in ("validate", "run", "replay", "inspect", "fixture", "diff", "export"):
         assert command in result.output
 
 
@@ -80,6 +81,27 @@ def test_run_rejects_an_unknown_record_level(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "must be all, errors or off" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["run", "replay"])
+def test_an_unsupported_sink_is_rejected_before_any_run_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, [command, str(tmp_path / "x"), "--sink", "ftp://u:secret@h"])
+
+    assert result.exit_code == 1
+    assert "unsupported sink scheme `ftp`" in result.output
+    assert "secret" not in result.output
+    assert not (tmp_path / "runs").exists()
+
+
+def test_export_needs_a_sink(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["export", str(tmp_path)])
+
+    assert result.exit_code != 0
+    assert "--sink" in result.output
 
 
 def test_replay_rejects_a_directory_that_is_not_a_run(tmp_path: Path) -> None:

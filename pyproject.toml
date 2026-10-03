@@ -21,13 +21,24 @@ dependencies = [
 [project.scripts]
 scrape = "groceries_scraper.cli:app"
 
+[project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.2",
+]
+s3 = [
+    "boto3>=1.35",
+]
+
 [build-system]
 requires = ["uv_build>=0.12.20,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "boto3>=1.35",
+    "moto[s3]>=5",
     "mypy>=2.3.1",
+    "psycopg[binary]>=3.2",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
     "types-pyyaml>=6.0.12.20260906",
@@ -44,7 +55,7 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["jsonpath_ng", "jsonpath_ng.*"]  # ships no type hints
+module = ["jsonpath_ng", "jsonpath_ng.*", "boto3"]  # ship no type hints
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
