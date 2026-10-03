@@ -16,7 +16,7 @@ src/groceries_scraper/
   engine/                    # PURE: pipes, steps, fields, follow rules, trace (no scrapy import)
   adapter/                   # Scrapy spider, capture/replay middleware, pipelines
   run/                       # run directory, summary, health
-  cli.py                     # Typer app: validate | run | replay | inspect | fixture
+  cli.py                     # Typer app: validate | run | replay | inspect | fixture | diff
 tests/sites/<site>/          # Golden Fixtures (captures + expected records)
 runs/<site>/<run_id>/        # Run output (gitignored)
 ```
@@ -44,7 +44,7 @@ session:                       # Session Setup — runs before Start Requests
 replay:
   ignore_params: [_ts, csrf]   # excluded from request fingerprint
 
-records:                       # every emitted Record Type; `key:` (Record Key) optional
+records:                       # every emitted Record Type; `key:` (Record Key) optional, dedupes
   product: {key: [sku]}
 
 health:
@@ -156,6 +156,13 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - On a status in `refresh_on`: re-run Session Setup, retry the request (its Request Template re-rendered with the new Session Variables), up to `max_refresh` per Run. Requests failing meanwhile wait for the refresh rather than starting another; `refresh_on` statuses are never retried with the stale Session. Past the limit, such requests are dropped and counted (`session/refresh_exhausted`).
 - Session Setup failure (non-2xx, network error, or an `extract` with no value) → Run closes with reason `session_setup_failed` → Run Health `failed`.
 
+### Record Keys
+- Within a Run, a Record whose Record Key matches an earlier Record of its Record Type is
+  dropped (`duplicate Record Key`), as is one with a null or absent key Field. Drops are
+  recorded in the Extraction Trace and stats like missing required Fields, so they count
+  toward `max_dropped_ratio`. Records the `--limit` later cuts still claim their key.
+- Key values compare as canonical JSON, so structured values match whatever their key order.
+
 ## Run directory
 
 ```
@@ -262,7 +269,17 @@ scrape run sites/<site>.yaml [--limit N] [--record all|errors|off]
 scrape replay runs/<site>/<run_id> [--config edited.yaml]
 scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
+scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
 ```
+
+`diff` compares two Runs of one Site, per Record Type with a Record Key in the newer
+Run's config snapshot (a key that differs from the older Run's is an error). It lists
+Records added, removed and changed, each change with its top-level Fields' old and new
+values (an absent Field compares as `null`); `--field` narrows changes to one Field.
+Records are compared without `_meta`; Runs from before deduplication keep their first
+Record per key, and Records with a null key Field are skipped. A Run that did not finish
+(e.g. cut by `--limit`) is warned about, since Records it missed show as added or removed.
+`--json` prints full added/removed Records and `{old, new}` per changed Field.
 
 `inspect` reads the saved Capture and Extraction Trace without a crawl. It shows the HTTP
 summary beside Field and Follow Rule Step outputs, labels errors, and prints the parent
@@ -279,4 +296,4 @@ Replay each fixture against the current `sites/<site>.yaml` with network connect
 refused, comparing Records independently of crawl order and rejecting missing Captures.
 
 ## Deferred (post-v1)
-Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · Record Key dedup/diffing (price history) · output sinks (DB/S3) · nightly live smoke runs.
+Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · price history across many Runs · output sinks (DB/S3) · nightly live smoke runs.
