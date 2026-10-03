@@ -100,8 +100,8 @@ def test_an_unsupported_sink_is_rejected_before_any_run_starts(
 def test_export_needs_a_sink(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["export", str(tmp_path)])
 
-    assert result.exit_code != 0
-    assert "--sink" in result.output
+    assert result.exit_code == 2
+    assert "Missing option" in result.stderr  # Rich styles the option name on CI
 
 
 def test_replay_rejects_a_directory_that_is_not_a_run(tmp_path: Path) -> None:
