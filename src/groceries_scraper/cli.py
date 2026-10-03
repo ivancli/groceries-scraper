@@ -5,6 +5,7 @@ import typer
 
 from groceries_scraper.config import ConfigError, Site, load_checked_site
 from groceries_scraper.run import create_run
+from groceries_scraper.run.summary import format_summary
 
 RUNS_DIR = Path("runs")
 
@@ -47,7 +48,7 @@ def run(
     limit: Annotated[int | None, typer.Option(min=1, help="Stop after N Records.")] = None,
     record: Annotated[str | None, typer.Option(help="all | errors | off")] = None,
 ) -> None:
-    """Run a Site."""
+    """Run a Site; exits 0 / 1 / 2 for Run Health ok / degraded / failed."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
     if record not in (None, "all", "errors", "off"):
@@ -59,7 +60,9 @@ def run(
         )
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    crawl(site, new_run, limit)
+    stats, health = crawl(site, new_run, limit)
+    typer.echo(f"Run {new_run.run_id}\n{format_summary(stats, health)}")
+    raise typer.Exit(code=health.exit_code)
 
 
 @app.command()

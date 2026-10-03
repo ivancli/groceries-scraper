@@ -8,9 +8,10 @@ from typing import IO, Self
 from scrapy.crawler import Crawler
 from scrapy.exceptions import DropItem
 
-from groceries_scraper.adapter.settings import RECORD_LIMIT, RUN
+from groceries_scraper.adapter.settings import RECORD_LIMIT, RUN, STATS
 from groceries_scraper.engine.extract import Record
 from groceries_scraper.run import Run
+from groceries_scraper.run.stats import RunStats
 
 
 @dataclass(frozen=True)
@@ -23,15 +24,16 @@ class EmittedRecord:
 
 
 class RecordPipeline:
-    def __init__(self, run: Run, limit: int | None) -> None:
+    def __init__(self, run: Run, limit: int | None, stats: RunStats) -> None:
         self.run = run
         self.limit = limit
+        self.stats = stats
         self.written = 0
         self._files: dict[str, IO[str]] = {}
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> Self:
-        return cls(crawler.settings[RUN], crawler.settings[RECORD_LIMIT])
+        return cls(crawler.settings[RUN], crawler.settings[RECORD_LIMIT], crawler.settings[STATS])
 
     def process_item(self, item: object) -> object:
         if not isinstance(item, EmittedRecord):
@@ -50,6 +52,7 @@ class RecordPipeline:
         line = json.dumps({**record.data, "_meta": meta}, ensure_ascii=False)
         self._file(record.record_type).write(line + "\n")
         self.written += 1
+        self.stats.add_record(record)
         return item
 
     def _file(self, record_type: str) -> IO[str]:

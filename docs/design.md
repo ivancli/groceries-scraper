@@ -211,6 +211,11 @@ runs/<site>/<run_id>/
 - `ok` / `degraded` / `failed` → exit codes 0 / 1 / 2.
 - Built-in `failed`: Session Setup failed, or zero Records for any declared Record Type.
 - Configured Health Checks breach → `degraded` (v1; per-check severity is a later concern).
+- `run.json` gains `stats` (duration; pages per Page Type; Records per Record Type; drops
+  by detail-free reason; null ratio per top-level Field over written Records; HTTP status
+  histogram over all Captures) and `health` (`status` plus every breach). Ratios with an
+  empty denominator are 0; `max_*` checks breach only above their threshold.
+- `scrape run` ends with a short summary on stdout and exits with the Run Health's code.
 
 ## CLI
 

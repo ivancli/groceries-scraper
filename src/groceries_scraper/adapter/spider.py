@@ -18,7 +18,7 @@ from groceries_scraper.adapter.middlewares import (
     VARIABLES,
 )
 from groceries_scraper.adapter.pipelines import EmittedRecord
-from groceries_scraper.adapter.settings import RECORDER
+from groceries_scraper.adapter.settings import RECORDER, STATS
 from groceries_scraper.config import Site
 from groceries_scraper.config.models import Session
 from groceries_scraper.engine.follow import FollowRequest
@@ -27,8 +27,9 @@ from groceries_scraper.engine.pipe import PipeContext
 from groceries_scraper.engine.request import RenderedRequest, RequestSource
 from groceries_scraper.engine.session import RefreshAction, SessionRefresh, evaluate_setup
 from groceries_scraper.run.recording import Capture, RunRecorder
+from groceries_scraper.run.stats import RunStats
 
-# Close reason and stats key for Run Health.
+# Close reason and Scrapy stats key.
 SESSION_SETUP_FAILED = "session_setup_failed"
 
 _ERROR_STATUSES = list(range(400, 600))
@@ -108,6 +109,7 @@ class SiteSpider(scrapy.Spider):
             return
         capture: Capture = response.meta[CAPTURE]
         capture_no = capture.capture_no
+        self._stats.add_page(follow.page_type)
         try:
             result = evaluate_response(
                 self.site.page_types[follow.page_type],
@@ -134,6 +136,8 @@ class SiteSpider(scrapy.Spider):
                 "follow": [asdict(entry) for entry in result.follow.trace],
             },
         )
+        for dropped in result.extraction.dropped:
+            self._stats.add_dropped(dropped)
         for record in result.extraction.records:
             yield EmittedRecord(record, response.url, capture_no)
         for request in result.follow.requests:
@@ -224,6 +228,7 @@ class SiteSpider(scrapy.Spider):
     def _setup_failed(self, index: int, error: str) -> NoReturn:
         self.logger.error("Session Setup step %d failed: %s", index, error)
         self._inc_stat(SESSION_SETUP_FAILED)
+        self._stats.session_setup_failed = True
         raise CloseSpider(SESSION_SETUP_FAILED)
 
     def _inc_stat(self, key: str) -> None:
@@ -234,3 +239,8 @@ class SiteSpider(scrapy.Spider):
     def _recorder(self) -> RunRecorder:
         recorder: RunRecorder = self.crawler.settings[RECORDER]
         return recorder
+
+    @property
+    def _stats(self) -> RunStats:
+        stats: RunStats = self.crawler.settings[STATS]
+        return stats

@@ -30,6 +30,7 @@ site: e2e
 settings: {download_delay: 0, concurrent_requests_per_domain: 1$settings}
 $session
 records: {product: {key: [sku]}}
+$health
 start: [{url: "$base/c/dairy", page_type: listing}]
 page_types:
   listing:
@@ -56,6 +57,10 @@ page_types:
       price: {var: price, type: number}
       name: {jsonpath: $$.name, type: string}
 """)
+
+
+def _site_config(**values: str) -> str:
+    return SITE.substitute({"health": ""}, **values)
 
 
 class _Shop(BaseHTTPRequestHandler):
@@ -201,8 +206,10 @@ session:
 CSRF_HEADER = 'headers: {X-CSRF-Token: "{{ session.csrf }}"}'
 
 
-def _run(tmp_path: Path, shop: _ShopServer, *args: str, settings: str = "") -> Path:
-    return _run_with_log(tmp_path, shop, *args, settings=settings)[0]
+def _run(
+    tmp_path: Path, shop: _ShopServer, *args: str, settings: str = "", exit_code: int = 0
+) -> Path:
+    return _run_with_log(tmp_path, shop, *args, settings=settings, exit_code=exit_code)[0]
 
 
 def _run_with_log(
@@ -213,6 +220,8 @@ def _run_with_log(
     max_refresh: int | None = None,
     refresh_on: str = "419",
     request_headers: str | None = None,
+    health: str = "",
+    exit_code: int = 0,
 ) -> tuple[Path, str]:
     """`max_refresh` set: the Site runs Session Setup and sends the CSRF header."""
     base = f"http://127.0.0.1:{shop.server_address[1]}"
@@ -228,13 +237,13 @@ def _run_with_log(
     )
     config = tmp_path / "e2e.yaml"
     config.write_text(
-        SITE.substitute(base=base, settings=settings, session=session, headers=headers)
+        _site_config(base=base, settings=settings, session=session, headers=headers, health=health)
     )
-    return _crawl_config(tmp_path, *args)
+    return _crawl_config(tmp_path, *args, exit_code=exit_code)
 
 
 def _crawl_config(
-    tmp_path: Path, *args: str, env: dict[str, str] | None = None
+    tmp_path: Path, *args: str, env: dict[str, str] | None = None, exit_code: int = 0
 ) -> tuple[Path, str]:
     result = subprocess.run(
         [str(SCRAPE), "run", str(tmp_path / "e2e.yaml"), *args],
@@ -244,9 +253,9 @@ def _crawl_config(
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == exit_code, result.stderr
     [run_dir] = (tmp_path / "runs" / "e2e").iterdir()
-    return run_dir, result.stderr
+    return run_dir, result.stderr + result.stdout
 
 
 def _records(run_dir: Path) -> list[dict[str, Any]]:
@@ -288,7 +297,7 @@ def test_limit_stops_the_crawl_after_n_records(tmp_path: Path, shop: _ShopServer
 def test_robots_txt_disallow_is_respected_by_default(tmp_path: Path, shop: _ShopServer) -> None:
     shop.robots = "User-agent: *\nDisallow: /api/\n"
 
-    run_dir = _run(tmp_path, shop)
+    run_dir = _run(tmp_path, shop, exit_code=2)  # no Records of a declared Record Type
 
     assert _records(run_dir) == []
     assert "/c/dairy?page=2" in shop.paths  # the crawl ran; only the API was skipped
@@ -389,11 +398,58 @@ def test_session_setup_is_retried_even_for_a_refresh_status(
 def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer) -> None:
     shop.csrf, shop.home_status = True, 503
 
-    _, log = _run_with_log(tmp_path, shop, max_refresh=1)
+    run_dir, log = _run_with_log(tmp_path, shop, max_refresh=1, exit_code=2)
 
+    assert _manifest(run_dir)["health"] == {
+        "status": "failed",
+        "breaches": ["Session Setup failed", "no Records of Record Type `product`"],
+    }
     assert "/c/dairy" not in shop.paths
     assert "Session Setup step 0 failed: Session Setup request got HTTP 503" in log
     assert "'finish_reason': 'session_setup_failed'" in log
+
+
+def _manifest(run_dir: Path) -> dict[str, Any]:
+    manifest: dict[str, Any] = json.loads((run_dir / "run.json").read_text())
+    return manifest
+
+
+def test_a_healthy_run_saves_stats_and_health_and_exits_0(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {"p10": (404, "{}"), "p11": (200, "{}")}
+
+    run_dir, log = _run_with_log(tmp_path, shop, health="health: {min_records: {product: 5}}")
+
+    manifest = _manifest(run_dir)
+    stats = manifest["stats"]
+    assert stats["duration_seconds"] > 0
+    assert {key: value for key, value in stats.items() if key != "duration_seconds"} == {
+        "pages": {"listing": 3, "product": 5},  # HTTP errors never reach a Page Type
+        "records": {"product": 5},
+        "dropped": {"total": 0, "by_reason": {}},
+        "null_ratio": {"name": 1 / 5, "price": 0.0, "sku": 0.0},
+        "http_status": {"200": 8, "404": 1},
+    }
+    assert manifest["health"] == {"status": "ok", "breaches": []}
+    assert "records: product 5" in log
+    assert "health: ok" in log
+
+
+def test_a_health_check_breach_degrades_the_run_and_exits_1(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {"p10": (200, "{}")}
+
+    run_dir, log = _run_with_log(
+        tmp_path, shop, health="health: {max_null_ratio: {name: 0.1}}", exit_code=1
+    )
+
+    assert _manifest(run_dir)["health"] == {
+        "status": "degraded",
+        "breaches": ["max_null_ratio.name: 0.167 > 0.100"],
+    }
+    assert "health: degraded\n  max_null_ratio.name: 0.167 > 0.100" in log
 
 
 def _captures(run_dir: Path) -> list[dict[str, Any]]:
@@ -650,7 +706,7 @@ session:
         active: {{jsonpath: $.active}}
 """
     (tmp_path / "e2e.yaml").write_text(
-        SITE.substitute(
+        _site_config(
             base=base,
             settings="",
             session=session,
@@ -703,7 +759,7 @@ session:
         f"?pin={quote(str(pin), safe='')}&public=visible#public%2Fsku/{quote(str(pin), safe='')}"
     )
     shop.extra_headers = [("Content-Location", content_location)]
-    config = SITE.substitute(
+    config = _site_config(
         base=base,
         settings="",
         session=session,
@@ -752,7 +808,7 @@ def test_capture_fingerprints_use_original_requests_and_the_source_ignore_policy
 ) -> None:
     shop.session_payload = {"pin": 123456, "other_pin": 987654}
     base = f"http://127.0.0.1:{shop.server_address[1]}"
-    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
     config["session"] = {
         "setup": [
             {
@@ -798,7 +854,7 @@ def test_form_fingerprints_decode_ignored_keys_and_public_values_using_declared_
     tmp_path: Path, shop: _ShopServer
 ) -> None:
     base = f"http://127.0.0.1:{shop.server_address[1]}"
-    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
     config["replay"] = {"ignore_params": ["café", "pin"]}
     original = config["page_types"]["listing"]["follow"].pop(0)
     variants = [
@@ -839,7 +895,7 @@ def test_undecodable_forms_keep_strict_original_body_fingerprints(
     tmp_path: Path, shop: _ShopServer, charset: str, values: tuple[str, str]
 ) -> None:
     base = f"http://127.0.0.1:{shop.server_address[1]}"
-    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
     original = config["page_types"]["listing"]["follow"].pop(0)
     for value in reversed(values):
         rule = copy.deepcopy(original)
@@ -892,7 +948,7 @@ def test_url_headers_mask_secrets_crossing_component_boundaries(
     shop.session_payload = {"pin": pin}
     base = f"http://127.0.0.1:{shop.server_address[1]}"
     shop.extra_headers = [("Content-Location", base + suffix)]
-    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
     config["session"] = {
         "setup": [{"request": {"url": base + "/"}, "extract": {"pin": {"jsonpath": "$.pin"}}}]
     }
@@ -919,7 +975,7 @@ def test_custom_numeric_secret_copies_are_redacted_before_json_serialization(
     )
     base = f"http://127.0.0.1:{shop.server_address[1]}"
     config = yaml.safe_load(
-        SITE.substitute(
+        _site_config(
             base=base,
             settings="",
             session="",

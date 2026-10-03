@@ -20,6 +20,8 @@ class Record:
 class DroppedRecord:
     index: int
     reason: str
+    # Detail-free reasons, so Run stats can count drops without one key per bad value.
+    causes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,11 +48,15 @@ def extract(page_type: PageType, scopes: list[Any], ctx: PipeContext) -> Extract
         fields = _Fields(ctx, result.trace, index)
         data = fields.evaluate(page_type.fields, node, "")
         if fields.missing:
-            result.dropped.append(DroppedRecord(index, "; ".join(fields.missing)))
+            reasons = [reason for reason, _ in fields.missing]
+            causes = tuple(cause for _, cause in fields.missing)
+            result.dropped.append(DroppedRecord(index, "; ".join(reasons), causes))
         else:
             result.records.append(Record(page_type.record, data))
     return result
 
+
+_INDEX = re.compile(r"\[\d+\]")
 
 # Distinct from None so `default` applies only when nothing matched, not after a failed Coercion.
 _NO_MATCH: Any = object()
@@ -61,7 +67,7 @@ class _Fields:
     ctx: PipeContext
     trace: list[FieldTrace]
     record: int
-    missing: list[str] = field(default_factory=list)
+    missing: list[tuple[str, str]] = field(default_factory=list)  # (reason, cause)
 
     def evaluate(self, specs: dict[str, FieldSpec], scope: Any, prefix: str) -> dict[str, Any]:
         return {name: self._field(f"{prefix}{name}", spec, scope) for name, spec in specs.items()}
@@ -79,9 +85,12 @@ class _Fields:
         if value is _NO_MATCH:
             value = spec.default
         if value is None and spec.required:
+            cause = f"required Field `{_INDEX.sub('[]', path)}` is " + (
+                "invalid" if error else "missing"
+            )
             reason = f"required Field `{path}` is " + (f"invalid: {error}" if error else "missing")
             self._trace(path, [], reason)
-            self.missing.append(reason)
+            self.missing.append((reason, cause))
         return value
 
     def _object(self, path: str, spec: FieldSpec, scope: Any) -> Any:

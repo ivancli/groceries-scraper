@@ -112,7 +112,7 @@ def test_record_missing_a_required_field_is_dropped_with_reason_in_trace() -> No
 
     reason = "required Field `sku` is missing"
     assert result.records == []
-    assert result.dropped == [DroppedRecord(0, reason)]
+    assert result.dropped == [DroppedRecord(0, reason, (reason,))]
     assert reason in [t.error for t in result.trace if t.path == "sku"]
     assert "name" in [t.path for t in result.trace]
 
@@ -123,7 +123,7 @@ def test_required_field_failing_coercion_is_dropped_with_the_coercion_error() ->
     result = _extract(page, {"p": "$3.50"})
 
     reason = "required Field `price` is invalid: cannot coerce '$3.50' to number"
-    assert result.dropped == [DroppedRecord(0, reason)]
+    assert result.dropped == [DroppedRecord(0, reason, ("required Field `price` is invalid",))]
     assert reason in [t.error for t in result.trace if t.path == "price"]
 
 
@@ -152,7 +152,8 @@ def test_page_level_loop_emits_one_record_per_node_and_counts_drops() -> None:
         {"sku": "A1", "name": "Milk", "price": 1.5},
         {"sku": "B2", "name": "Cheese", "price": 4.0},
     ]
-    assert result.dropped == [DroppedRecord(1, "required Field `sku` is missing")]
+    reason = "required Field `sku` is missing"
+    assert result.dropped == [DroppedRecord(1, reason, (reason,))]
     assert [(t.path, t.error) for t in result.trace if t.record == 1 and t.error] == [
         ("sku", "required Field `sku` is missing")
     ]
@@ -268,7 +269,13 @@ def test_required_field_inside_a_loop_element_drops_the_whole_record() -> None:
 
     result = _extract(page, {"variants": [{"sku": "A"}, {}]})
 
-    assert result.dropped == [DroppedRecord(0, "required Field `variants[1].sku` is missing")]
+    assert result.dropped == [
+        DroppedRecord(
+            0,
+            "required Field `variants[1].sku` is missing",
+            ("required Field `variants[].sku` is missing",),
+        )
+    ]
 
 
 def test_html_node_is_coerced_by_its_text() -> None:
