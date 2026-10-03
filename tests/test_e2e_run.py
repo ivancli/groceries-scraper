@@ -21,6 +21,9 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import pytest
 import yaml
+from typer.testing import CliRunner
+
+from groceries_scraper.cli import app
 
 PAGES = 3
 PER_PAGE = 2
@@ -286,6 +289,35 @@ def test_run_writes_product_records_with_meta(tmp_path: Path, shop: _ShopServer)
             "record_type": "product",
             "source_url": f"{base}/api/product",
         }
+
+
+def test_inspect_displays_html_and_json_captures_from_an_e2e_run(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _run(tmp_path, shop)
+    runner = CliRunner()
+    requests_before = list(shop.paths)
+    for capture in _captures(run_dir):
+        result = runner.invoke(
+            app,
+            ["inspect", str(run_dir), str(capture["capture_no"]), "--body"],
+            env={"COLUMNS": "140"},
+        )
+        assert result.exit_code == 0, result.output
+        assert "Extraction Trace" in result.stdout
+        assert "HTTP 200" in result.stdout
+        assert "Parent chain:" in result.stdout
+        assert "Response body" in result.stdout
+        if capture["page_type"] == "listing":
+            assert "Follow Rule 0: select (Loop node 0)" in result.stdout
+            assert "1. css ->" in result.stdout
+            assert '<div class="tile"' in result.stdout
+        else:
+            assert "Field name (Record 0)" in result.stdout
+            assert "1. jsonpath ->" in result.stdout
+            assert '  "name": "Product p' in result.stdout
+            assert "(listing) ->" in result.stdout
+    assert shop.paths == requests_before
 
 
 def test_limit_stops_the_crawl_after_n_records(tmp_path: Path, shop: _ShopServer) -> None:

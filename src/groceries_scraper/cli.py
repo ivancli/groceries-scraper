@@ -98,9 +98,24 @@ def replay(
 
 
 @app.command()
-def inspect(run_dir: Path, capture_no: int) -> None:
+def inspect(
+    run_dir: Path,
+    capture_no: Annotated[int, typer.Argument(min=1)],
+    field: Annotated[
+        str | None, typer.Option(help="Show only this Field and nested Fields.")
+    ] = None,
+    body: Annotated[bool, typer.Option(help="Pretty-print the response JSON/HTML body.")] = False,
+) -> None:
     """Show a Capture and its Extraction Trace."""
-    _not_implemented("inspect")
+    from rich.console import Console
+
+    from groceries_scraper.run.inspection import inspect_capture
+
+    try:
+        inspect_capture(run_dir, capture_no, Console(highlight=False), field, body)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        typer.echo(f"Cannot inspect Capture {capture_no}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
 
 
 @fixture_app.command("save")
