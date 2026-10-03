@@ -19,6 +19,7 @@ class RunStats:
     drops_by_reason: Counter[str] = field(default_factory=Counter)
     requests_ok: int = 0
     request_failures: Counter[str] = field(default_factory=Counter)
+    requests_missing: int = 0  # Replay requests no Capture matched; never sent
     http_status: Counter[int] = field(default_factory=Counter)  # every Capture
     duration_seconds: float = 0.0
     finish_reason: str | None = None
@@ -58,6 +59,9 @@ class RunStats:
     def add_request_failed(self, reason: str) -> None:
         self.request_failures[reason] += 1
 
+    def add_missing(self) -> None:
+        self.requests_missing += 1
+
     def add_response(self, status: int) -> None:
         self.http_status[status] += 1
 
@@ -83,7 +87,11 @@ class RunStats:
             "records": dict(sorted(self.records.items())),
             "dropped": {"total": self.dropped, "by_reason": dict(self.drops_by_reason)},
             "null_ratio": self.null_ratio(),
-            "requests": {"ok": self.requests_ok, "failed": dict(self.request_failures)},
+            "requests": {
+                "ok": self.requests_ok,
+                "failed": dict(self.request_failures),
+                "missing": self.requests_missing,
+            },
             "http_status": {str(status): n for status, n in sorted(self.http_status.items())},
         }
 

@@ -1,5 +1,6 @@
 from groceries_scraper.config.loader import (
     ConfigError,
+    checked_site,
     load_checked_site,
     load_site,
     parse_site,
@@ -12,6 +13,7 @@ __all__ = [
     "Findings",
     "Site",
     "check_site",
+    "checked_site",
     "load_checked_site",
     "load_site",
     "parse_site",
