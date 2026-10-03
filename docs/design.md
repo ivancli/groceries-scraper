@@ -196,7 +196,10 @@ runs/<site>/<run_id>/
   fingerprint (headers and URL fragments excluded), after removing the source Run's
   ignored query parameters and top-level JSON/form body keys. With a nonempty ignore
   policy, JSON objects use sorted keys and compact UTF-8 JSON; forms use sorted pairs
-  with blank values preserved. Other bodies remain byte-for-byte inputs to the hash.
+  with blank values preserved. Form percent-escaped bytes use the `Content-Type` charset
+  (UTF-8 when absent), decoded strictly; unknown charsets or invalid bytes leave the body
+  unchanged. Canonical forms use UTF-8. JSON parsing does not use the header's charset
+  parameter. Other bodies remain byte-for-byte inputs to the hash.
 - Replay must compare this stored identity using the source Run's ignore policy, even
   with an edited extraction config. Redacted URLs are display metadata, never matching
   inputs. Legacy Captures without a fingerprint may be indexed from an original URL;

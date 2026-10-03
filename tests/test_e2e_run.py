@@ -794,6 +794,78 @@ def test_capture_fingerprints_use_original_requests_and_the_source_ignore_policy
         assert (pair[0]["fingerprint"] == pair[1]["fingerprint"]) is ignore
 
 
+def test_form_fingerprints_decode_ignored_keys_and_public_values_using_declared_charset(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    config["replay"] = {"ignore_params": ["café", "pin"]}
+    original = config["page_types"]["listing"]["follow"].pop(0)
+    variants = [
+        ('"ISO-8859-1"', "caf%E9=discard&name=caf%E9&pin=first"),
+        ('"UTF-8"', "caf%C3%A9=discard&name=caf%C3%A9&pin=second"),
+        ('"ISO-8859-1"', "name=caf%E9"),
+    ]
+    for charset, suffix in reversed(variants):
+        rule = copy.deepcopy(original)
+        request = rule["request"]
+        request.pop("json")
+        request["body"] = "sku={{ sku }}&" + suffix
+        request["headers"] = {
+            "Content-Type": f'application/x-www-form-urlencoded; note="a;b"; charset={charset}'
+        }
+        config["page_types"]["listing"]["follow"].insert(0, rule)
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    run_dir, _ = _crawl_config(tmp_path)
+    captures = [capture for capture in _captures(run_dir) if capture["page_type"] == "product"]
+    assert len(captures) == len(_records(run_dir)) == 18
+    assert len({capture["request"]["fingerprint"] for capture in captures}) == 6
+    for sku in _skus():
+        requests = [
+            capture["request"] for capture in captures if capture["variables"]["sku"] == sku
+        ]
+        assert len(requests) == 3
+        assert len({request["fingerprint"] for request in requests}) == 1
+        assert {base64.b64decode(request["body"]).decode("ascii") for request in requests} == {
+            f"sku={sku}&{suffix}" for _, suffix in variants
+        }
+
+
+@pytest.mark.parametrize(
+    ("charset", "values"),
+    [("no-such-codec", ("first", "second")), ("utf-8", ("%FF", "%FE"))],
+)
+def test_undecodable_forms_keep_strict_original_body_fingerprints(
+    tmp_path: Path, shop: _ShopServer, charset: str, values: tuple[str, str]
+) -> None:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = yaml.safe_load(SITE.substitute(base=base, settings="", session="", headers=""))
+    original = config["page_types"]["listing"]["follow"].pop(0)
+    for value in reversed(values):
+        rule = copy.deepcopy(original)
+        request = rule["request"]
+        request.pop("json")
+        request["body"] = f"sku={{{{ sku }}}}&pin={value}"
+        request["headers"] = {
+            "Content-Type": f"application/x-www-form-urlencoded; charset={charset}"
+        }
+        config["page_types"]["listing"]["follow"].insert(0, rule)
+    identities = []
+    for name, ignored in (("filtered", ["pin"]), ("strict", [])):
+        config["replay"] = {"ignore_params": ignored}
+        case_dir = tmp_path / name
+        case_dir.mkdir()
+        (case_dir / "e2e.yaml").write_text(yaml.safe_dump(config))
+        run_dir, _ = _crawl_config(case_dir)
+        captures = [capture for capture in _captures(run_dir) if capture["page_type"] == "product"]
+        assert len(captures) == len(_records(run_dir)) == 12
+        identities.append(
+            {capture["request"]["body"]: capture["request"]["fingerprint"] for capture in captures}
+        )
+    assert len(set(identities[0].values())) == 12
+    assert identities[0] == identities[1]
+
+
 @pytest.mark.parametrize(
     ("pin", "suffix", "masked"),
     [
