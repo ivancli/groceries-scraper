@@ -231,9 +231,15 @@ runs/<site>/<run_id>/
 scrape validate sites/<site>.yaml
 scrape run sites/<site>.yaml [--limit N] [--record all|errors|off]
 scrape replay runs/<site>/<run_id> [--config edited.yaml]
-scrape inspect runs/<site>/<run_id> <capture_no>
+scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
 ```
+
+`inspect` reads the saved Capture and Extraction Trace without a crawl. It shows the HTTP
+summary beside Field and Follow Rule Step outputs, labels errors, and prints the parent
+chain (marking parents omitted by `record_level: errors`). `--field` limits the trace to
+that Field and its nested paths. `--body` pretty-prints the response JSON/HTML, decoding
+gzip/deflate first; malformed JSON is shown as text so parsing failures can be inspected.
 
 ## Deferred (post-v1)
 Playwright (`render: browser`) · Record schema contracts · multiple Sessions per Site · Record Key dedup/diffing (price history) · output sinks (DB/S3) · nightly live smoke runs.

@@ -1,0 +1,16 @@
+Capture 2 (product)                               ┃ Extraction Trace
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GET https://shop.example/product                  │ Field name (Record 0)
+HTTP 200                                          │   1. jsonpath -> ["Milk"]
+Elapsed: 0.125s                                   │ Field price (Record 0)
+                                                  │   1. jsonpath -> ["$3.50"]
+Request headers:                                  │   ERROR: cannot coerce '$3.50' to number
+  Authorization: "[REDACTED]"                     │
+                                                  │
+Response headers:                                 │
+  Content-Type: ["application/json;               │
+charset=utf-8"]                                   │
+                                                  │
+Variables:                                        │
+{"sku": "A1", "session": {}}                      │
+Parent chain: 1 (listing) -> 2 (product)
