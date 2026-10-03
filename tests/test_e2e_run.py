@@ -302,6 +302,36 @@ def test_run_writes_product_records_with_meta(tmp_path: Path, shop: _ShopServer)
         }
 
 
+def test_records_with_a_repeated_or_missing_record_key_are_dropped(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {
+        "p11": (200, json.dumps({"name": "Product p10"})),
+        "p21": (200, json.dumps({})),
+    }
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = _site_config(base=base, settings="", session="", headers="")
+    (tmp_path / "e2e.yaml").write_text(config.replace("key: [sku]", "key: [name]"))
+
+    run_dir, _ = _crawl_config(tmp_path)
+
+    names = [record["name"] for record in _records(run_dir)]
+    assert sorted(names) == ["Product p10", "Product p20", "Product p30", "Product p31"]
+    assert _manifest(run_dir)["stats"]["dropped"] == {
+        "total": 2,
+        "by_reason": {"duplicate Record Key": 1, "Record Key Field `name` is missing": 1},
+    }
+    missing, duplicate = sorted(
+        entry["reason"]
+        for trace in (run_dir / "traces").glob("*-product.trace.json")
+        for entry in json.loads(trace.read_text())["dropped"]
+    )
+    assert missing == "Record Key Field `name` is missing"
+    assert re.fullmatch(
+        r'duplicate Record Key \{"name": "Product p10"\} \(first in Capture \d+\)', duplicate
+    )
+
+
 def test_inspect_displays_html_and_json_captures_from_an_e2e_run(
     tmp_path: Path, shop: _ShopServer
 ) -> None:
@@ -869,6 +899,7 @@ def test_capture_fingerprints_use_original_requests_and_the_source_ignore_policy
     shop.session_payload = {"pin": 123456, "other_pin": 987654}
     base = f"http://127.0.0.1:{shop.server_address[1]}"
     config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
+    config["records"]["product"] = {}  # one Record per request, even for a repeated sku
     config["session"] = {
         "setup": [
             {
@@ -915,6 +946,7 @@ def test_form_fingerprints_decode_ignored_keys_and_public_values_using_declared_
 ) -> None:
     base = f"http://127.0.0.1:{shop.server_address[1]}"
     config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
+    config["records"]["product"] = {}  # one Record per request, even for a repeated sku
     config["replay"] = {"ignore_params": ["café", "pin"]}
     original = config["page_types"]["listing"]["follow"].pop(0)
     variants = [
@@ -956,6 +988,7 @@ def test_undecodable_forms_keep_strict_original_body_fingerprints(
 ) -> None:
     base = f"http://127.0.0.1:{shop.server_address[1]}"
     config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
+    config["records"]["product"] = {}  # one Record per request, even for a repeated sku
     original = config["page_types"]["listing"]["follow"].pop(0)
     for value in reversed(values):
         rule = copy.deepcopy(original)

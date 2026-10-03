@@ -23,12 +23,14 @@ from groceries_scraper.adapter.pipelines import EmittedRecord
 from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.config import Site
 from groceries_scraper.config.models import Session
+from groceries_scraper.engine.extract import DroppedRecord
 from groceries_scraper.engine.follow import FollowRequest
 from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
 from groceries_scraper.engine.request import RenderedRequest, RequestSource
 from groceries_scraper.engine.session import RefreshAction, SessionRefresh, evaluate_setup
 from groceries_scraper.run.health import SESSION_SETUP_FAILED
+from groceries_scraper.run.keys import RecordKeys
 from groceries_scraper.run.recording import Capture, RunRecorder
 from groceries_scraper.run.stats import RunStats
 
@@ -62,6 +64,7 @@ class SiteSpider(scrapy.Spider):
         self._setup_steps = session.setup
         self._refresh = SessionRefresh(session.refresh_on, session.max_refresh)
         self._session: dict[str, Any] = {}
+        self._keys = RecordKeys(site.records)
         # Held until Session Setup ends: Start Requests once, then retries after each refresh.
         self._starts: list[FollowRequest] = []
         self._retries: list[FollowRequest] = []
@@ -136,18 +139,27 @@ class SiteSpider(scrapy.Spider):
             self._recorder.record(capture, {"error": f"{type(exc).__name__}: {exc}"})
             self.logger.error("Extraction failed for %s: %s", response.url, exc)
             return
+        records, dropped_records = [], list(result.extraction.dropped)
+        for record in result.extraction.records:
+            if rejection := self._keys.admit(record, capture_no):
+                dropped_records.append(
+                    DroppedRecord(record.index, rejection.reason, (rejection.kind,))
+                )
+            else:
+                records.append(record)
+        dropped_records.sort(key=lambda dropped: dropped.index)
         self._recorder.record(
             capture,
             {
                 "loop": [asdict(step) for step in result.loop] if result.loop is not None else None,
                 "fields": [asdict(entry) for entry in result.extraction.trace],
-                "dropped": [asdict(entry) for entry in result.extraction.dropped],
+                "dropped": [asdict(entry) for entry in dropped_records],
                 "follow": [asdict(entry) for entry in result.follow.trace],
             },
         )
-        for dropped in result.extraction.dropped:
+        for dropped in dropped_records:
             self._stats.add_dropped(dropped)
-        for record in result.extraction.records:
+        for record in records:
             self._stats.add_extracted()
             yield EmittedRecord(record, response.url, capture_no)
         for request in result.follow.requests:

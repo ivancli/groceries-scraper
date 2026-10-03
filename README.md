@@ -102,7 +102,8 @@ page_types:
 
 The example above is illustrative; `shop.example` is a placeholder. The included
 ALDI config is the runnable example. Use a stable product identifier as the Record
-Key when available; v1 declares keys but does not deduplicate Records.
+Key when available: within a Run, a Record repeating an earlier Record's key, or with
+a null key Field, is dropped (and counts toward `max_dropped_ratio`).
 
 Numeric conversion is strict: `3.50` works, but `$3.50` needs cleaning with an XPath
 expression or Pipe before conversion. A missing required Field drops the Record;
@@ -132,6 +133,16 @@ uv run scrape replay runs/aldi/<run_id> --config sites/aldi.yaml
 Replay serves saved responses, creates a new Run, and never fetches unmatched requests.
 It requires a source Run recorded with `record_level: all`. Changing selectors works
 offline; adding URLs or changing request bodies can produce missing Captures.
+
+## Compare Runs
+
+`diff` matches two Runs' Records by Record Key and lists those added, removed or
+changed, with each changed Field's old and new value:
+
+```bash
+uv run scrape diff runs/aldi/<old_run_id> runs/aldi/<new_run_id> --field price
+uv run scrape diff runs/aldi/<old_run_id> runs/aldi/<new_run_id> --json
+```
 
 Run and Replay exit with `0` for healthy, `1` for degraded, and `2` for failed Run
 Health. Validation errors exit nonzero too. Check `run.json` for the reasons.

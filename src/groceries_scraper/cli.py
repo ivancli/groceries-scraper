@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
@@ -111,6 +112,28 @@ def inspect(
     except (OSError, ValueError, KeyError, TypeError) as exc:
         typer.echo(f"Cannot inspect Capture {capture_no}: {exc}", err=True)
         raise typer.Exit(code=1) from None
+
+
+@app.command()
+def diff(
+    old_run: Path,
+    new_run: Path,
+    field: Annotated[str | None, typer.Option(help="Report changes to this Field only.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full diff as JSON.")] = False,
+) -> None:
+    """Compare two Runs of a Site: Records added, removed or changed, matched by Record Key."""
+    from groceries_scraper.run.diff import DiffError, diff_runs
+
+    try:
+        result = diff_runs(old_run, new_run, field)
+    except DiffError as exc:
+        typer.echo(f"Cannot diff Runs: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    _warn(result.warnings)
+    if as_json:
+        typer.echo(json.dumps(result.to_json(), ensure_ascii=False, indent=2))
+    else:
+        typer.echo(result.summary())
 
 
 @fixture_app.command("save")

@@ -125,7 +125,8 @@ _Avoid_: Re-run, offline mode, cache mode
 - A **Record** missing a required **Field** is dropped and the reason recorded in the **Extraction Trace**
 - A **Run** has many **Captures**; each **Capture** has one **Extraction Trace** and at most one parent **Capture**
 - A **Run** has exactly one **Run Health**, derived from the **Site**'s **Health Checks** plus built-in failure conditions
-- A **Record Type** has at most one **Record Key** (v1: declared only; no dedup or diffing)
+- A **Record Type** has at most one **Record Key**; within a **Run** only the first **Record** per key is kept
+- Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
 
 ## Example dialogue

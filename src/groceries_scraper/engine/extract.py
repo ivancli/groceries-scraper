@@ -14,6 +14,7 @@ from groceries_scraper.engine.pipe import PipeContext, StepTrace, run_pipe
 class Record:
     record_type: str
     data: dict[str, Any]
+    index: int = field(default=0, compare=False)  # the Scope it came from, as in the Trace
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ def extract(page_type: PageType, scopes: list[Any], ctx: PipeContext) -> Extract
             kinds = tuple(missing.kind for missing in fields.missing)
             result.dropped.append(DroppedRecord(index, reason, kinds))
         else:
-            result.records.append(Record(page_type.record, data))
+            result.records.append(Record(page_type.record, data, index))
     return result
 
 
