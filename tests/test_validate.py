@@ -454,3 +454,93 @@ def test_health_checks_must_name_known_record_types_and_fields() -> None:
         "health.min_records.promo: no reachable Page Type emits Record Type `promo`",
         "health.max_null_ratio.prise: no Record-emitting Page Type has Field `prise`",
     ]
+
+
+# --- Record schema contracts ------------------------------------------------
+
+
+def _contracted(page_fields: dict[str, Any], contract: dict[str, Any]) -> list[str]:
+    page_types = {
+        "listing": {"follow": [_to("pdp")]},
+        "pdp": {"record": "product", "fields": page_fields},
+    }
+    return _errors(page_types, records={"product": {"fields": contract}})
+
+
+def test_page_type_missing_a_contract_field_is_an_error() -> None:
+    errors = _contracted(
+        {"sku": {"css": "b::text", "type": "string"}},
+        {"sku": {"type": "string"}, "name": {"type": "string"}},
+    )
+
+    assert errors == [
+        "page_types.pdp.fields.name: missing; Record Type `product`'s contract declares it"
+    ]
+
+
+def test_page_type_field_outside_the_contract_is_an_error() -> None:
+    errors = _contracted(
+        {"sku": {"css": "b::text", "type": "string"}, "extra": {"css": "i::text"}},
+        {"sku": {"type": "string"}},
+    )
+
+    assert errors == ["page_types.pdp.fields.extra: not in Record Type `product`'s contract"]
+
+
+def test_page_type_field_type_must_match_the_contract() -> None:
+    errors = _contracted(
+        {"price": {"css": "b::text", "type": "string"}, "name": {"css": "h1::text"}},
+        {"price": {"type": "number"}, "name": {"type": "string"}},
+    )
+
+    assert errors == [
+        "page_types.pdp.fields.price: type `string`, but Record Type `product`'s contract "
+        "says `number`",
+        "page_types.pdp.fields.name: no type, but Record Type `product`'s contract says `string`",
+    ]
+
+
+def test_contract_required_field_must_be_required_on_the_page_type() -> None:
+    errors = _contracted(
+        {
+            "sku": {"css": "b::text", "type": "string"},
+            "name": {"css": "h1::text", "type": "string", "required": True},
+        },
+        {"sku": {"type": "string", "required": True}, "name": {"type": "string"}},
+    )
+
+    assert errors == [
+        "page_types.pdp.fields.sku: Record Type `product`'s contract requires `required: true`"
+    ]
+
+
+def test_nested_fields_are_checked_against_the_contract() -> None:
+    page_fields = {
+        "nutrition": {"type": "object", "fields": {"kcal": {"css": "i::text", "type": "number"}}},
+        "images": {"type": "array", "css": "img::attr(src)", "items": {"type": "string"}},
+        "variants": {
+            "type": "array",
+            "each": {"css": "li"},
+            "fields": {"size": {"css": "::text"}},
+        },
+        "tags": {"type": "array", "css": "a::text", "items": {"type": "string"}},
+    }
+    contract = {
+        "nutrition": {"type": "object", "fields": {"kcal": {"type": "integer"}}},
+        "images": {"type": "array", "items": {"type": "integer"}},
+        "variants": {"type": "array", "fields": {"size": {"type": "string"}}},
+        "tags": {"type": "array", "fields": {"name": {"type": "string"}}},
+    }
+
+    errors = _contracted(page_fields, contract)
+
+    assert errors == [
+        "page_types.pdp.fields.nutrition.fields.kcal: type `number`, but Record Type `product`'s "
+        "contract says `integer`",
+        "page_types.pdp.fields.images.items: type `string`, but Record Type `product`'s "
+        "contract says `integer`",
+        "page_types.pdp.fields.variants.fields.size: no type, but Record Type `product`'s "
+        "contract says `string`",
+        "page_types.pdp.fields.tags: array of scalars (`items`), but Record Type `product`'s "
+        "contract says array of objects (`fields`)",
+    ]

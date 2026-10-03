@@ -45,7 +45,7 @@ replay:
   ignore_params: [_ts, csrf]   # excluded from request fingerprint
 
 records:                       # every emitted Record Type; `key:` (Record Key) optional, dedupes
-  product: {key: [sku]}
+  product: {key: [sku]}        # optional `fields:` = Record Contract (see Record Contracts)
 
 health:
   min_records: {product: 500}
@@ -164,6 +164,27 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   With `record_level: errors`, a duplicate alone does not keep its Capture: listings
   routinely repeat products.
 - Key values compare as canonical JSON, so structured values match whatever their key order.
+
+### Record Contracts
+- A Record Type may declare `fields:` once at Site level; `scrape validate` (and every Run)
+  then checks each reachable Page Type emitting it against that contract. It is static:
+  emitted Records are not re-checked.
+- The contract is closed and exact: every contract Field must exist with the same `type`, and
+  no other Field may; a contract `required: true` needs `required: true` on the Page Type
+  (an emitter may be stricter than the contract).
+- Nested Fields are checked too. An `object` takes `fields`; an `array` takes either
+  `items` (scalar type, matching a Page Type's `items`) or `fields` (matching `each` + `fields`).
+
+```yaml
+records:
+  product:
+    key: [sku]
+    fields:
+      sku:    {type: string, required: true}
+      price:  {type: number}
+      images: {type: array, items: {type: string}}
+      variants: {type: array, fields: {size: {type: string}}}
+```
 
 ## Run directory
 
@@ -323,4 +344,4 @@ Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink f
   has; `run.json` is uploaded last as the completion marker.
 
 ## Deferred (post-v1)
-Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · price history across many Runs · nightly live smoke runs.
+Browser waits beyond network idle (e.g. for a selector) · multiple Sessions per Site · price history across many Runs · nightly live smoke runs.
