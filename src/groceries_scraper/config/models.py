@@ -247,10 +247,14 @@ class PageType(_Model):
             raise _config_error("a Follow Rule with `scope: each` needs a page-level `items` Loop")
         return self
 
+    @property
+    def renders_in_browser(self) -> bool:
+        return self.render == "browser"
+
     @model_validator(mode="after")
     def _browser_renders_html(self) -> PageType:
         # The browser's output is its rendered DOM, never the raw JSON.
-        if self.render == "browser" and self.response != "html":
+        if self.renders_in_browser and self.response != "html":
             raise _config_error("`render: browser` needs `response: html`")
         return self
 

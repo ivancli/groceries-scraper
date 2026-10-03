@@ -61,6 +61,13 @@ def _errors(data: dict[str, Any]) -> list[str]:
     return exc.value.errors
 
 
+def test_page_types_render_over_http_unless_they_opt_into_a_browser() -> None:
+    site = parse_site(_site(page_types={"listing": {}, "app": {"render": "browser"}}), DEFAULTS)
+
+    assert not site.page_types["listing"].renders_in_browser
+    assert site.page_types["app"].renders_in_browser
+
+
 def test_site_settings_override_defaults() -> None:
     site = parse_site(_site(settings={"download_delay": 3.5}), DEFAULTS)
 
