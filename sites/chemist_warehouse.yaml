@@ -1,0 +1,35 @@
+# Chemist Warehouse category listing, following its pagination.
+# Listings load their products with JavaScript, so they are rendered in a browser.
+site: chemist_warehouse
+settings:
+  download_delay: 1.0
+  record_level: all
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.chemistwarehouse.com.au/shop-online/258/medicines
+    page_type: listing
+page_types:
+  listing:
+    render: browser
+    record: product
+    items:
+      each: {css: "ul[data-cy='product-grid'] > li"}
+    follow:
+      - select: {css: "a[aria-label='Go to next page'][aria-disabled='false']::attr(href)"}
+        page_type: listing
+    fields:
+      url:
+        xpath: "concat('https://www.chemistwarehouse.com.au', .//a[starts-with(@href, '/buy/')]/@href)"
+        type: string
+        required: true
+      name: {css: "a[href^='/buy/']::text", type: string, required: true}
+      price:
+        xpath: "translate(substring-after((.//p[@data-cy='dollar-string'])[1], '$'), ',', '')"
+        type: number
+        required: true
+      currency: {template: AUD, type: string}
