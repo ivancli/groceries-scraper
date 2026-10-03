@@ -63,6 +63,14 @@ page_types:
 """)
 
 
+# Tiles only exist after the script's fetch, so only a browser render sees them.
+JS_LISTING = """<html><body><div id="app"></div><script>
+fetch("/api/tiles" + location.search)
+  .then((response) => response.text())
+  .then((html) => { document.getElementById("app").innerHTML = html; });
+</script></body></html>"""
+
+
 def _site_config(**values: str) -> str:
     return SITE.substitute({"health": ""}, **values)
 
@@ -82,7 +90,9 @@ class _Shop(BaseHTTPRequestHandler):
             self.end_headers()
         elif url.path == ("/home" if self.server.home_redirects else "/"):
             self._home()
-        elif url.path == "/c/dairy":
+        elif url.path == "/c/dairy" and self.server.render_js:
+            self._send("text/html; charset=utf-8", JS_LISTING)
+        elif url.path in ("/c/dairy", "/api/tiles"):
             page = int(parse_qs(url.query).get("page", ["1"])[0])
             self._send("text/html; charset=utf-8", _listing(page, self.server.wrap_pagination))
         else:
@@ -159,6 +169,7 @@ class _ShopServer(ThreadingHTTPServer):
     home_redirects = False  # `/` → `/home`, as localised homepages often do
     home_failures = 0  # the homepage's first N responses are 503s
     wrap_pagination = False  # the last listing page links back to the first
+    render_js = False  # listing pages are a script shell fetching their tiles
     product_responses: dict[str, tuple[int, str]]
     extra_headers: list[tuple[str, str]]
     session_payload: dict[str, Any] | None = None
@@ -1198,3 +1209,51 @@ def test_replay_matches_a_rotated_csrf_body_value_only_when_ignored(
     )
     assert len(_records(replay)) == (len(_skus()) if ignored else 0)
     assert _manifest(replay)["stats"]["requests"]["missing"] == (0 if ignored else len(_skus()))
+
+
+# --- Browser rendering ------------------------------------------------------
+
+
+def _browser_run(tmp_path: Path, shop: _ShopServer) -> Path:
+    shop.render_js = True
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = yaml.safe_load(_site_config(base=base, settings="", session="", headers=""))
+    config["page_types"]["listing"]["render"] = "browser"
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    return _crawl_config(tmp_path)[0]
+
+
+def test_a_browser_rendered_page_type_extracts_from_the_rendered_dom(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _browser_run(tmp_path, shop)
+
+    assert _record_data(run_dir) == [
+        {"sku": sku, "price": float(f"{sku[1]}.{sku[2]}0"), "name": f"Product {sku}"}
+        for sku in _skus()
+    ]
+    assert {f"/api/tiles?page={page}" for page in range(2, PAGES + 1)} <= set(shop.paths)
+    captures = {c["capture_no"]: c for c in _captures(run_dir)}
+    listings = [no for no, c in captures.items() if c["page_type"] == "listing"]
+    assert len(listings) == PAGES
+    for no in listings:
+        assert captures[no]["render"] == "browser"
+        [body] = (run_dir / "captures").glob(f"{no:04d}-listing.body")
+        assert b'<div class="tile"' in body.read_bytes()
+    assert all("render" not in c for c in captures.values() if c["page_type"] == "product")
+
+
+def test_a_browser_rendered_run_replays_offline_without_a_browser(
+    tmp_path: Path, shop: _ShopServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _browser_run(tmp_path, shop)
+    # Launching a browser would fail: Playwright finds none here.
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "no-browsers"))
+
+    replay, network = _offline(tmp_path, "replay", str(source))
+
+    assert replay is not None and network == ""
+    assert _record_data(replay) == _record_data(source)
+    assert sorted((c["page_type"], c.get("render", "")) for c in _captures(replay)) == sorted(
+        (c["page_type"], c.get("render", "")) for c in _captures(source)
+    )

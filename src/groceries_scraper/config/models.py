@@ -235,6 +235,7 @@ class FollowRule(_Model):
 
 class PageType(_Model):
     response: ScopeKind = "html"
+    render: Literal["http", "browser"] = "http"
     record: str | None = None
     items: Loop | None = None
     fields: dict[str, FieldSpec] = Field(default_factory=dict)
@@ -244,6 +245,13 @@ class PageType(_Model):
     def _each_scope_has_loop(self) -> PageType:
         if self.items is None and any(rule.scope == "each" for rule in self.follow):
             raise _config_error("a Follow Rule with `scope: each` needs a page-level `items` Loop")
+        return self
+
+    @model_validator(mode="after")
+    def _browser_renders_html(self) -> PageType:
+        # The browser's output is its rendered DOM, never the raw JSON.
+        if self.render == "browser" and self.response != "html":
+            raise _config_error("`render: browser` needs `response: html`")
         return self
 
 
