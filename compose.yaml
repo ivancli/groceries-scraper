@@ -6,7 +6,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: test
-    ports: ["55432:5432"]  # off 5432, so a local Postgres doesn't clash
+    ports: ["127.0.0.1:55432:5432"]  # localhost only: the password is public; off 5432 to avoid clashes
     tmpfs: [/var/lib/postgresql/data]  # tests drop their tables; nothing worth keeping
     healthcheck:
       test: pg_isready -U postgres
