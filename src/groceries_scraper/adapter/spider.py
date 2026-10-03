@@ -23,7 +23,6 @@ from groceries_scraper.adapter.pipelines import EmittedRecord
 from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.config import Site
 from groceries_scraper.config.models import Session
-from groceries_scraper.engine.extract import DroppedRecord
 from groceries_scraper.engine.follow import FollowRequest
 from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
@@ -139,27 +138,19 @@ class SiteSpider(scrapy.Spider):
             self._recorder.record(capture, {"error": f"{type(exc).__name__}: {exc}"})
             self.logger.error("Extraction failed for %s: %s", response.url, exc)
             return
-        records, dropped_records = [], list(result.extraction.dropped)
-        for record in result.extraction.records:
-            if rejection := self._keys.admit(record, capture_no):
-                dropped_records.append(
-                    DroppedRecord(record.index, rejection.reason, (rejection.kind,))
-                )
-            else:
-                records.append(record)
-        dropped_records.sort(key=lambda dropped: dropped.index)
+        extraction = self._keys.filter(result.extraction, capture_no)
         self._recorder.record(
             capture,
             {
                 "loop": [asdict(step) for step in result.loop] if result.loop is not None else None,
-                "fields": [asdict(entry) for entry in result.extraction.trace],
-                "dropped": [asdict(entry) for entry in dropped_records],
+                "fields": [asdict(entry) for entry in extraction.trace],
+                "dropped": [asdict(entry) for entry in extraction.dropped],
                 "follow": [asdict(entry) for entry in result.follow.trace],
             },
         )
-        for dropped in dropped_records:
+        for dropped in extraction.dropped:
             self._stats.add_dropped(dropped)
-        for record in records:
+        for record in extraction.records:
             self._stats.add_extracted()
             yield EmittedRecord(record, response.url, capture_no)
         for request in result.follow.requests:

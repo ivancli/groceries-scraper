@@ -11,6 +11,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config import Site
 from groceries_scraper.run.directory import Run
+from groceries_scraper.run.keys import DUPLICATE_KEY
 from groceries_scraper.run.redaction import REDACTED, MetadataRedactor
 from groceries_scraper.run.stats import RunStats
 from groceries_scraper.run.summary import RunOutcome
@@ -132,7 +133,10 @@ class RunRecorder:
 
 
 def _has_error(trace: dict[str, Any]) -> bool:
-    if trace.get("error") or trace.get("dropped"):
+    if trace.get("error"):
+        return True
+    # A repeated Record Key is expected on listings, not an extraction failure.
+    if any(list(entry["reason_kinds"]) != [DUPLICATE_KEY] for entry in trace.get("dropped", [])):
         return True
     steps = list(trace.get("loop") or [])
     for entry in [*trace.get("fields", []), *trace.get("follow", [])]:

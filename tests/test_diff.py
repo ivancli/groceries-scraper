@@ -88,7 +88,7 @@ def test_a_field_filter_reports_only_changes_to_that_field(tmp_path: Path) -> No
         {"product": [{"sku": "a", "price": 1.5}, {"sku": "b", "price": 2.0, "name": "B2"}]},
     )
 
-    [product] = diff_runs(old, new, field="price").record_types
+    [product] = diff_runs(old, new, only_field="price").record_types
 
     assert product.changed == [Change({"sku": "a"}, {"price": (1.0, 1.5)})]
     assert product.unchanged == 1
@@ -112,6 +112,33 @@ def test_record_types_without_a_record_key_are_skipped(tmp_path: Path) -> None:
 
     assert [d.record_type for d in diff.record_types] == ["product"]
     assert diff.record_types[0].added == [{"sku": "a"}]
+
+
+def test_a_record_type_keyed_only_in_the_older_run_shows_its_records_as_removed(
+    tmp_path: Path,
+) -> None:
+    old = _run(
+        tmp_path,
+        "1",
+        {"promotion": [{"id": 1}]},
+        record_types={**KEYED, "promotion": {"key": ["id"]}},
+    )
+    new = _run(tmp_path, "2", {})
+
+    diff = diff_runs(old, new)
+
+    assert [(d.record_type, d.removed) for d in diff.record_types] == [
+        ("product", []),
+        ("promotion", [{"id": 1}]),
+    ]
+
+
+def test_a_field_no_record_has_cannot_be_compared(tmp_path: Path) -> None:
+    old = _run(tmp_path, "1", {"product": [{"sku": "a", "price": 1.0}]})
+    new = _run(tmp_path, "2", {"product": [{"sku": "a", "price": 1.0}]})
+
+    with pytest.raises(DiffError, match="no Record in either Run has Field `prise`"):
+        diff_runs(old, new, only_field="prise")
 
 
 def test_runs_of_different_sites_cannot_be_compared(tmp_path: Path) -> None:

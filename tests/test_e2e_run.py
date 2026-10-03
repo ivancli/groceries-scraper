@@ -302,18 +302,22 @@ def test_run_writes_product_records_with_meta(tmp_path: Path, shop: _ShopServer)
         }
 
 
-def test_records_with_a_repeated_or_missing_record_key_are_dropped(
-    tmp_path: Path, shop: _ShopServer
-) -> None:
+def _keyed_by_name(tmp_path: Path, shop: _ShopServer, settings: str = "") -> Path:
+    """p11 repeats p10's name and p21 has none."""
     shop.product_responses = {
         "p11": (200, json.dumps({"name": "Product p10"})),
         "p21": (200, json.dumps({})),
     }
     base = f"http://127.0.0.1:{shop.server_address[1]}"
-    config = _site_config(base=base, settings="", session="", headers="")
+    config = _site_config(base=base, settings=settings, session="", headers="")
     (tmp_path / "e2e.yaml").write_text(config.replace("key: [sku]", "key: [name]"))
+    return _crawl_config(tmp_path)[0]
 
-    run_dir, _ = _crawl_config(tmp_path)
+
+def test_records_with_a_repeated_or_missing_record_key_are_dropped(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _keyed_by_name(tmp_path, shop)
 
     names = [record["name"] for record in _records(run_dir)]
     assert sorted(names) == ["Product p10", "Product p20", "Product p30", "Product p31"]
@@ -330,6 +334,14 @@ def test_records_with_a_repeated_or_missing_record_key_are_dropped(
     assert re.fullmatch(
         r'duplicate Record Key \{"name": "Product p10"\} \(first in Capture \d+\)', duplicate
     )
+
+
+def test_errors_recording_keeps_missing_key_drops_but_not_duplicates(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _keyed_by_name(tmp_path, shop, settings=", record_level: errors")
+
+    assert [capture["variables"]["sku"] for capture in _captures(run_dir)] == ["p21"]
 
 
 def test_inspect_displays_html_and_json_captures_from_an_e2e_run(
