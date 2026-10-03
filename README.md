@@ -200,6 +200,15 @@ uv run mypy
 uv run pytest
 ```
 
+Postgres Sink tests skip unless `TEST_DATABASE_URL` is set. Start a disposable database
+with Docker Compose and point the tests at it:
+
+```bash
+docker compose up -d --wait
+TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres uv run pytest
+docker compose down
+```
+
 Multiple Sessions per Site, price history across many Runs, schema contracts, and scheduled live checks are deferred.
 Use HTML or JSON endpoints for now. Offline fixtures detect changes to extraction
 code and configs; they do not detect changes to the live website.
