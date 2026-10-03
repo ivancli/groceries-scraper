@@ -2,10 +2,15 @@
 
 import json
 import secrets
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from groceries_scraper.config.models import RecordType
+from groceries_scraper.run.health import HealthLevel
+from groceries_scraper.run.keys import RecordKey
 
 
 @dataclass(frozen=True)
@@ -32,3 +37,56 @@ def read_manifest(path: Path) -> dict[str, Any]:
 def finish_reason(manifest: dict[str, Any]) -> str | None:
     reason: str | None = manifest.get("stats", {}).get("finish_reason")
     return reason
+
+
+class RunDirectoryError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class SavedRun:
+    """A Run read back from its directory."""
+
+    path: Path
+    site: str
+    run_id: str
+    manifest: dict[str, Any]
+    keys: dict[str, RecordKey]
+
+    @classmethod
+    def load(cls, path: Path) -> "SavedRun":
+        if not (path / "run.json").is_file():
+            raise RunDirectoryError(f"{path} is not a Run directory: no run.json")
+        try:
+            manifest = read_manifest(path)
+            keys = {
+                name: RecordKey(key)
+                for name, spec in manifest["config"].get("records", {}).items()
+                if (key := RecordType.model_validate(spec).key)
+            }
+            return cls(path, manifest["site"], manifest["run_id"], manifest, keys)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise RunDirectoryError(f"Cannot read Run {path}: {exc}") from exc
+
+    @property
+    def finish_reason(self) -> str | None:
+        return finish_reason(self.manifest)
+
+    @property
+    def health(self) -> HealthLevel | None:
+        """None until the Run has finished."""
+        level: HealthLevel | None = self.manifest.get("health", {}).get("level")
+        return level
+
+    def record_types(self) -> list[str]:
+        return sorted(path.stem for path in (self.path / "records").glob("*.jsonl"))
+
+    def records(self, record_type: str) -> Iterator[dict[str, Any]]:
+        """As written, `_meta` included; none when the Run wrote no such file."""
+        path = self.path / "records" / f"{record_type}.jsonl"
+        if not path.is_file():
+            return
+        with path.open(encoding="utf-8") as file:
+            for line in file:
+                if line.strip():
+                    yield json.loads(line)

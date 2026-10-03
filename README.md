@@ -151,7 +151,7 @@ Health. Validation errors exit nonzero too. Check `run.json` for the reasons.
 
 Install the extra for each backend, then pass `--sink` to `run`/`replay`, or export a
 saved Run later. Failed Runs are skipped unless `--force`; re-exporting replaces the
-earlier copy. `run` exits `3` if a Sink fails.
+earlier copy. Sinks are checked before the crawl; a Sink failure exits `3`.
 
 ```bash
 uv sync --locked --extra postgres --extra s3

@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from groceries_scraper.config.models import RecordType
-from groceries_scraper.run.directory import finish_reason, read_manifest
+from groceries_scraper.run.directory import RunDirectoryError, SavedRun
 from groceries_scraper.run.health import FINISHED
 from groceries_scraper.run.keys import RecordKey
 
@@ -84,47 +83,26 @@ class RunDiff:
         return "\n".join(line for diff in self.record_types for line in diff.lines())
 
 
-@dataclass(frozen=True)
-class _SavedRun:
-    path: Path
-    site: str
-    run_id: str
-    keys: dict[str, RecordKey]
-    finish_reason: str | None
+def _load(path: Path) -> SavedRun:
+    try:
+        return SavedRun.load(path)
+    except RunDirectoryError as exc:
+        raise DiffError(str(exc)) from exc
 
-    @classmethod
-    def load(cls, path: Path) -> "_SavedRun":
-        if not (path / "run.json").is_file():
-            raise DiffError(f"{path} is not a Run directory: no run.json")
-        try:
-            manifest = read_manifest(path)
-            keys = {
-                name: RecordKey(key)
-                for name, spec in manifest["config"].get("records", {}).items()
-                if (key := RecordType.model_validate(spec).key)
-            }
-            return cls(path, manifest["site"], manifest["run_id"], keys, finish_reason(manifest))
-        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-            raise DiffError(f"Cannot read Run {path}: {exc}") from exc
 
-    def records(self, record_type: str, key: RecordKey) -> _Records:
-        """Runs from before deduplication keep their first Record per key."""
-        path = self.path / "records" / f"{record_type}.jsonl"
-        if not path.is_file():
-            return {}
-        records: _Records = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            data = {name: value for name, value in json.loads(line).items() if name != "_meta"}
-            if key.missing(data) is None:
-                records.setdefault(key.identity(data), data)
-        return records
+def _keyed(run: SavedRun, record_type: str, key: RecordKey) -> _Records:
+    """Runs from before deduplication keep their first Record per key."""
+    records: _Records = {}
+    for record in run.records(record_type):
+        data = {name: value for name, value in record.items() if name != "_meta"}
+        if key.missing(data) is None:
+            records.setdefault(key.identity(data), data)
+    return records
 
 
 def diff_runs(old_path: Path, new_path: Path, only_field: str | None = None) -> RunDiff:
     """`only_field` limits changes to that Field; added and removed Records are always listed."""
-    old, new = _SavedRun.load(old_path), _SavedRun.load(new_path)
+    old, new = _load(old_path), _load(new_path)
     if old.site != new.site:
         raise DiffError(f"Runs are of different Sites: {old.site} and {new.site}")
     record_types, field_seen = [], False
@@ -135,7 +113,7 @@ def diff_runs(old_path: Path, new_path: Path, only_field: str | None = None) -> 
         # A Record Type keyed in only one Run is still compared, so its Records aren't lost.
         key = new_key or old_key
         assert key is not None
-        before, after = old.records(record_type, key), new.records(record_type, key)
+        before, after = _keyed(old, record_type, key), _keyed(new, record_type, key)
         field_seen = field_seen or any(
             only_field in data for data in [*before.values(), *after.values()]
         )

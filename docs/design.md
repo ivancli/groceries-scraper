@@ -260,7 +260,7 @@ runs/<site>/<run_id>/
   are not counted. `max_null_ratio` checks each Record Type with that Field. Ratios with an
   empty denominator are 0; `max_*` checks breach only above their threshold.
 - `scrape run` ends with a short summary on stdout and exits with the Run Health's code,
-  or `3` when a non-failed Run could not be exported to a `--sink`.
+  or `3` when a `--sink` is unusable or fails to take a non-failed Run.
 
 ## CLI
 
@@ -306,13 +306,18 @@ The Run directory stays the primary output (`diff`, Replay and fixtures read it)
 receives a copy once the Run has finished, so blocking I/O stays out of the crawl and the
 export can be gated on Run Health: `failed` Runs are skipped unless `export --force`.
 Sinks are chosen per invocation with `--sink` (a deployment concern, not Site config);
-credentials come from the URL or the backend's usual environment. Each export replaces
-any earlier export of the same Run, so re-running `export` is safe. A failing Sink does
-not stop the others; errors name Sinks without credentials.
+credentials come from the URL or the backend's usual environment. Each Sink is checked
+(driver installed, reachable) before the crawl starts. Each export replaces any earlier
+export of the same Run, so re-running `export` is safe. A failing Sink does not stop the
+others; errors name Sinks without credentials.
 
-- `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's `scrape_runs` row
-  (site, run_id, health, manifest) and its `scrape_records` rows
-  (record_type, record_key, data without `_meta`, meta). Tables are created if missing.
+Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink fails;
+`run`/`replay` keep their Run Health code unless a Sink fails (3).
+
+- `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's
+  `scrape_runs` row (site, run_id, health, manifest) and its `scrape_records` rows
+  (record_type, record_key, data without `_meta`, meta). Tables are created before the
+  first export if missing. NUL characters, which jsonb rejects, become U+FFFD.
 - `s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`): mirrors `run.json` and
   `records/*.jsonl` to `<prefix>/<site>/<run_id>/`, removing objects the Run no longer
   has; `run.json` is uploaded last as the completion marker.

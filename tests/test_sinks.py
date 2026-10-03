@@ -1,34 +1,39 @@
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from sink_runs import saved_run as _run
 
-from groceries_scraper.run.sinks import ExportError, RunExport, export_run, open_sink
+from groceries_scraper.run.directory import SavedRun
+from groceries_scraper.run.sinks import ExportError, SinkError, export_run, open_sink
 from groceries_scraper.run.sinks.postgres import PostgresSink
 from groceries_scraper.run.sinks.s3 import S3Sink
 
 
 class FakeSink:
     def __init__(self) -> None:
-        self.published: list[dict[str, Any]] = []
+        self.exported: list[dict[str, Any]] = []
 
-    def publish(self, export: RunExport) -> None:
-        self.published.append(
+    def prepare(self) -> None:
+        pass
+
+    def export(self, run: SavedRun) -> None:
+        self.exported.append(
             {
-                "run": (export.site, export.run_id, export.health),
+                "run": (run.site, run.run_id, run.health),
                 "records": {
                     record_type: [
-                        (row, export.key_values(record_type, row))
-                        for row in export.records(record_type)
+                        (record, key.values(record) if (key := run.keys.get(record_type)) else None)
+                        for record in run.records(record_type)
                     ]
-                    for record_type in export.record_types()
+                    for record_type in run.record_types()
                 },
             }
         )
 
 
-def test_a_finished_run_is_published_to_every_sink_with_its_records_and_keys(
+def test_a_finished_run_is_exported_to_every_sink_with_its_records_and_keys(
     tmp_path: Path,
 ) -> None:
     run = _run(
@@ -53,27 +58,27 @@ def test_a_finished_run_is_published_to_every_sink_with_its_records_and_keys(
             ],
         },
     }
-    assert [sink.published for sink in sinks] == [[expected], [expected]]
+    assert [sink.exported for sink in sinks] == [[expected], [expected]]
 
 
-def test_a_failed_run_is_not_published_unless_forced(tmp_path: Path) -> None:
+def test_a_failed_run_is_not_exported_unless_forced(tmp_path: Path) -> None:
     run = _run(tmp_path, {"product": [{"sku": "a"}]}, health="failed")
     sink = FakeSink()
 
     assert export_run(run, [sink]) is False
-    assert sink.published == []
+    assert sink.exported == []
 
     assert export_run(run, [sink], force=True) is True
-    assert [published["run"] for published in sink.published] == [
+    assert [exported["run"] for exported in sink.exported] == [
         ("shop", "20260101T000000Z-abc123", "failed")
     ]
 
 
-def test_a_degraded_run_is_published(tmp_path: Path) -> None:
+def test_a_degraded_run_is_exported(tmp_path: Path) -> None:
     sink = FakeSink()
 
     assert export_run(_run(tmp_path, {}, health="degraded"), [sink]) is True
-    assert sink.published == [
+    assert sink.exported == [
         {"run": ("shop", "20260101T000000Z-abc123", "degraded"), "records": {}}
     ]
 
@@ -128,7 +133,10 @@ def test_an_unsupported_or_incomplete_sink_url_is_rejected(url: str, message: st
 
 
 class BrokenSink:
-    def publish(self, export: RunExport) -> None:
+    def prepare(self) -> None:
+        pass
+
+    def export(self, run: SavedRun) -> None:
         raise ConnectionError("connection refused")
 
     def __str__(self) -> str:
@@ -140,15 +148,16 @@ def test_a_failing_sink_does_not_stop_the_others_and_is_named_in_the_error(
 ) -> None:
     sink = FakeSink()
 
-    with pytest.raises(ExportError, match="broken://sink: connection refused"):
+    with pytest.raises(SinkError, match="broken://sink: connection refused"):
         export_run(_run(tmp_path, {"product": [{"sku": "a"}]}), [BrokenSink(), sink])
-    assert len(sink.published) == 1
+    assert len(sink.exported) == 1
 
 
 @pytest.mark.parametrize(
     ("url", "name"),
     [
         ("postgres://user:secret@db:5433/scrapes?sslmode=require", "postgres://db:5433/scrapes"),
+        ("postgres://user:secret@db:bad/scrapes", "postgres://db:bad/scrapes"),
         ("s3://bucket/scrapes/", "s3://bucket/scrapes"),
     ],
 )
@@ -157,3 +166,25 @@ def test_sinks_are_named_without_credentials(url: str, name: str) -> None:
 
     assert str(sink) == name
     assert "secret" not in repr(sink)
+
+
+@pytest.mark.parametrize(
+    ("url", "module", "extra"),
+    [("postgres://db/scrapes", "psycopg", "postgres"), ("s3://bucket", "boto3", "s3")],
+)
+def test_a_sink_without_its_driver_names_the_extra_to_install(
+    monkeypatch: pytest.MonkeyPatch, url: str, module: str, extra: str
+) -> None:
+    monkeypatch.setitem(sys.modules, module, None)
+    monkeypatch.delitem(sys.modules, f"groceries_scraper.run.sinks.{extra}")
+
+    with pytest.raises(ExportError, match=rf"install groceries-scraper\[{extra}\]"):
+        open_sink(url)
+
+
+def test_an_unreachable_postgres_sink_fails_to_prepare_without_leaking_its_password() -> None:
+    sink = open_sink("postgres://user:secret@127.0.0.1:1/scrapes")
+
+    with pytest.raises(SinkError, match="postgres://127.0.0.1:1/scrapes is not usable:") as error:
+        sink.prepare()
+    assert "secret" not in str(error.value)
