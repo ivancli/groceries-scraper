@@ -263,6 +263,7 @@ def test_stats_count_pages_records_drops_requests_and_statuses() -> None:
 
     assert stats.to_json() == {
         "duration_seconds": 1.5,
+        "finish_reason": stats.finish_reason,
         "pages": {"listing": 1, "product": 2},
         "records": {"product": 2, "promotion": 0},
         "dropped": {
