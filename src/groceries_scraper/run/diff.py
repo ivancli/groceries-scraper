@@ -6,8 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from groceries_scraper.config.models import RecordType
+from groceries_scraper.run.directory import finish_reason, read_manifest
 from groceries_scraper.run.health import FINISHED
-from groceries_scraper.run.keys import key_values
+from groceries_scraper.run.keys import RecordKey
+
+_Records = dict[str, dict[str, Any]]  # by Record Key identity
 
 
 class DiffError(Exception):
@@ -17,7 +20,17 @@ class DiffError(Exception):
 @dataclass(frozen=True)
 class Change:
     key: dict[str, Any]
-    fields: dict[str, tuple[Any, Any]]  # Field -> (old, new)
+    fields: dict[str, tuple[Any, Any]]  # (old, new)
+
+    def to_json(self) -> dict[str, Any]:
+        fields = {name: {"old": old, "new": new} for name, (old, new) in self.fields.items()}
+        return {"key": self.key, "fields": fields}
+
+    def __str__(self) -> str:
+        fields = (
+            f"{name}: {_json(old)} -> {_json(new)}" for name, (old, new) in self.fields.items()
+        )
+        return f"{_json(self.key)} {'; '.join(fields)}"
 
 
 @dataclass(frozen=True)
@@ -28,6 +41,26 @@ class RecordTypeDiff:
     removed: list[dict[str, Any]] = field(default_factory=list)
     changed: list[Change] = field(default_factory=list)
     unchanged: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "record_type": self.record_type,
+            "key": self.key,
+            "added": self.added,
+            "removed": self.removed,
+            "changed": [change.to_json() for change in self.changed],
+            "unchanged": self.unchanged,
+        }
+
+    def lines(self) -> list[str]:
+        key = RecordKey(self.key)
+        return [
+            f"{self.record_type} (key: {key}): {len(self.added)} added, "
+            f"{len(self.removed)} removed, {len(self.changed)} changed, {self.unchanged} unchanged",
+            *(f"  + {_json(key.values(record))}" for record in self.added),
+            *(f"  - {_json(key.values(record))}" for record in self.removed),
+            *(f"  ~ {change}" for change in self.changed),
+        ]
 
 
 @dataclass(frozen=True)
@@ -44,106 +77,74 @@ class RunDiff:
             "old": self.old,
             "new": self.new,
             "warnings": self.warnings,
-            "record_types": [
-                {
-                    "record_type": diff.record_type,
-                    "key": diff.key,
-                    "added": diff.added,
-                    "removed": diff.removed,
-                    "changed": [
-                        {
-                            "key": change.key,
-                            "fields": {
-                                name: {"old": old, "new": new}
-                                for name, (old, new) in change.fields.items()
-                            },
-                        }
-                        for change in diff.changed
-                    ],
-                    "unchanged": diff.unchanged,
-                }
-                for diff in self.record_types
-            ],
+            "record_types": [diff.to_json() for diff in self.record_types],
         }
 
     def summary(self) -> str:
-        lines = []
-        for diff in self.record_types:
-            lines.append(
-                f"{diff.record_type} (key: {', '.join(diff.key)}): {len(diff.added)} added, "
-                f"{len(diff.removed)} removed, {len(diff.changed)} changed, "
-                f"{diff.unchanged} unchanged"
-            )
-            lines += [f"  + {_json(_key(diff.key, record))}" for record in diff.added]
-            lines += [f"  - {_json(_key(diff.key, record))}" for record in diff.removed]
-            lines += [
-                f"  ~ {_json(change.key)} "
-                + "; ".join(
-                    f"{name}: {_json(old)} -> {_json(new)}"
-                    for name, (old, new) in change.fields.items()
-                )
-                for change in diff.changed
-            ]
-        return "\n".join(lines)
-
-
-def _key(key: list[str], record: dict[str, Any]) -> dict[str, Any]:
-    return {name: record.get(name) for name in key}
-
-
-def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
+        return "\n".join(line for diff in self.record_types for line in diff.lines())
 
 
 @dataclass(frozen=True)
-class _Run:
+class _SavedRun:
     path: Path
     site: str
     run_id: str
-    keys: dict[str, list[str]]
+    keys: dict[str, RecordKey]
     finish_reason: str | None
 
     @classmethod
-    def load(cls, path: Path) -> "_Run":
+    def load(cls, path: Path) -> "_SavedRun":
         if not (path / "run.json").is_file():
             raise DiffError(f"{path} is not a Run directory: no run.json")
-        manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
-        records = manifest["config"].get("records", {})
-        keys = {name: RecordType.model_validate(spec).key for name, spec in records.items()}
-        finish_reason = manifest.get("stats", {}).get("finish_reason")
-        return cls(path, manifest["site"], manifest["run_id"], keys, finish_reason)
+        try:
+            manifest = read_manifest(path)
+            keys = {
+                name: RecordKey(key)
+                for name, spec in manifest["config"].get("records", {}).items()
+                if (key := RecordType.model_validate(spec).key)
+            }
+            return cls(path, manifest["site"], manifest["run_id"], keys, finish_reason(manifest))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise DiffError(f"Cannot read Run {path}: {exc}") from exc
 
-    def records(self, record_type: str, key: list[str]) -> dict[str, dict[str, Any]]:
-        """By key values; Runs from before deduplication keep their first Record per key."""
+    def records(self, record_type: str, key: RecordKey) -> _Records:
+        """Runs from before deduplication keep their first Record per key."""
         path = self.path / "records" / f"{record_type}.jsonl"
         if not path.is_file():
             return {}
-        by_key: dict[str, dict[str, Any]] = {}
+        records: _Records = {}
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             data = {name: value for name, value in json.loads(line).items() if name != "_meta"}
-            if all(data.get(name) is not None for name in key):
-                by_key.setdefault(key_values(key, data), data)
-        return by_key
+            if key.missing(data) is None:
+                records.setdefault(key.identity(data), data)
+        return records
 
 
-def diff_runs(old_path: Path, new_path: Path, field: str | None = None) -> RunDiff:
-    """`field` limits changes to that Field; added and removed Records are always reported."""
-    old, new = _load(old_path), _load(new_path)
+def diff_runs(old_path: Path, new_path: Path, only_field: str | None = None) -> RunDiff:
+    """`only_field` limits changes to that Field; added and removed Records are always listed."""
+    old, new = _SavedRun.load(old_path), _SavedRun.load(new_path)
     if old.site != new.site:
         raise DiffError(f"Runs are of different Sites: {old.site} and {new.site}")
-    record_types = []
-    for record_type, key in sorted(new.keys.items()):
-        old_key = old.keys.get(record_type, [])
-        if key and old_key and old_key != key:
-            raise DiffError(
-                f"Record Key of `{record_type}` differs: {_names(old_key)} and {_names(key)}"
-            )
-        if key:
-            record_types.append(_diff(record_type, key, old, new, field))
+    record_types, field_seen = [], False
+    for record_type in sorted(old.keys.keys() | new.keys.keys()):
+        old_key, new_key = old.keys.get(record_type), new.keys.get(record_type)
+        if old_key and new_key and old_key != new_key:
+            raise DiffError(f"Record Key of `{record_type}` differs: [{old_key}] and [{new_key}]")
+        # A Record Type keyed in only one Run is still compared, so its Records aren't lost.
+        key = new_key or old_key
+        assert key is not None
+        before, after = old.records(record_type, key), new.records(record_type, key)
+        field_seen = field_seen or any(
+            only_field in data for data in [*before.values(), *after.values()]
+        )
+        record_types.append(_diff(record_type, key, before, after, only_field))
     if not record_types:
         raise DiffError("no Record Type declares a Record Key, so Records cannot be matched")
+    if only_field is not None and not field_seen:
+        # Otherwise a misspelt Field reads as "nothing changed".
+        raise DiffError(f"no Record in either Run has Field `{only_field}`")
     warnings = [
         f"Run {run.run_id} did not finish ({run.finish_reason}): "
         "Records it missed show as added or removed"
@@ -153,38 +154,29 @@ def diff_runs(old_path: Path, new_path: Path, field: str | None = None) -> RunDi
     return RunDiff(new.site, old.run_id, new.run_id, record_types, warnings)
 
 
-def _names(key: list[str]) -> str:
-    return f"[{', '.join(key)}]"
-
-
-def _load(path: Path) -> _Run:
-    try:
-        return _Run.load(path)
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise DiffError(f"Cannot read Run {path}: {exc}") from exc
-
-
 def _diff(
-    record_type: str, key: list[str], old: _Run, new: _Run, field: str | None
+    record_type: str, key: RecordKey, before: _Records, after: _Records, only_field: str | None
 ) -> RecordTypeDiff:
-    before, after = old.records(record_type, key), new.records(record_type, key)
     changed, unchanged = [], 0
-    for k in sorted(before.keys() & after.keys()):
-        names = [field] if field is not None else sorted(before[k].keys() | after[k].keys())
+    for identity in sorted(before.keys() & after.keys()):
+        old, new = before[identity], after[identity]
+        names = [only_field] if only_field is not None else sorted(old.keys() | new.keys())
         fields = {
-            name: (before[k].get(name), after[k].get(name))
-            for name in names
-            if before[k].get(name) != after[k].get(name)
+            name: (old.get(name), new.get(name)) for name in names if old.get(name) != new.get(name)
         }
         if fields:
-            changed.append(Change(json.loads(k), fields))
+            changed.append(Change(key.values(new), fields))
         else:
             unchanged += 1
     return RecordTypeDiff(
         record_type,
-        key,
-        added=[after[k] for k in sorted(after.keys() - before.keys())],
-        removed=[before[k] for k in sorted(before.keys() - after.keys())],
+        key.fields,
+        added=[after[identity] for identity in sorted(after.keys() - before.keys())],
+        removed=[before[identity] for identity in sorted(before.keys() - after.keys())],
         changed=changed,
         unchanged=unchanged,
     )
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)

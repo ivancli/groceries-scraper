@@ -161,6 +161,8 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   dropped (`duplicate Record Key`), as is one with a null or absent key Field. Drops are
   recorded in the Extraction Trace and stats like missing required Fields, so they count
   toward `max_dropped_ratio`. Records the `--limit` later cuts still claim their key.
+  With `record_level: errors`, a duplicate alone does not keep its Capture: listings
+  routinely repeat products.
 - Key values compare as canonical JSON, so structured values match whatever their key order.
 
 ## Run directory
@@ -272,10 +274,11 @@ scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
 scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
 ```
 
-`diff` compares two Runs of one Site, per Record Type with a Record Key in the newer
-Run's config snapshot (a key that differs from the older Run's is an error). It lists
+`diff` compares two Runs of one Site, per Record Type with a Record Key in either Run's
+`run.json` config (a key that differs between them is an error). It lists
 Records added, removed and changed, each change with its top-level Fields' old and new
-values (an absent Field compares as `null`); `--field` narrows changes to one Field.
+values (an absent Field compares as `null`); `--field` narrows changes to one Field, and
+is an error when no Record in either Run has it.
 Records are compared without `_meta`; Runs from before deduplication keep their first
 Record per key, and Records with a null key Field are skipped. A Run that did not finish
 (e.g. cut by `--limit`) is warned about, since Records it missed show as added or removed.

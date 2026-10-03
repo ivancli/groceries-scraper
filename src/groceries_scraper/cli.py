@@ -125,7 +125,7 @@ def diff(
     from groceries_scraper.run.diff import DiffError, diff_runs
 
     try:
-        result = diff_runs(old_run, new_run, field)
+        result = diff_runs(old_run, new_run, only_field=field)
     except DiffError as exc:
         typer.echo(f"Cannot diff Runs: {exc}", err=True)
         raise typer.Exit(code=1) from None

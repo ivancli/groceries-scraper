@@ -185,8 +185,7 @@ uv run mypy
 uv run pytest
 ```
 
-Browser rendering, multiple Sessions per Site, price-history diffing/deduplication,
-database/S3 sinks, schema contracts, and scheduled live checks are deferred.
+Multiple Sessions per Site, price history across many Runs, database/S3 sinks, schema contracts, and scheduled live checks are deferred.
 Use HTML or JSON endpoints for now. Offline fixtures detect changes to extraction
 code and configs; they do not detect changes to the live website.
 

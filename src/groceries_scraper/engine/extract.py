@@ -14,7 +14,8 @@ from groceries_scraper.engine.pipe import PipeContext, StepTrace, run_pipe
 class Record:
     record_type: str
     data: dict[str, Any]
-    index: int = field(default=0, compare=False)  # the Scope it came from, as in the Trace
+    # Lets later drops cite the Scope as the Extraction Trace does; not part of the Record's value.
+    index: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)

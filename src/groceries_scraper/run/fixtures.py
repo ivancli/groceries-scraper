@@ -7,6 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from groceries_scraper.run.directory import finish_reason, read_manifest
+from groceries_scraper.run.health import FINISHED
+
 
 class FixtureError(Exception):
     pass
@@ -50,13 +53,13 @@ def save_fixture(run_dir: Path, root: Path = Path("tests/sites")) -> Path:
 
     try:
         source = SourceRun.load(run_dir)
-        manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        manifest = read_manifest(run_dir)
         for section in ("stats", "health"):
             if not isinstance(manifest.get(section, {}), dict):
                 raise FixtureError(f"{run_dir / 'run.json'}: {section} must be a JSON object")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", source.run.site):
             raise FixtureError("Fixture Site names must contain only letters, digits, _ or -")
-        if manifest.get("stats", {}).get("finish_reason") != "finished":
+        if finish_reason(manifest) != FINISHED:
             raise FixtureError(
                 "Save a completed Run without --limit; limited Runs cannot replay fully"
             )

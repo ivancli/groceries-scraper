@@ -20,6 +20,7 @@ from groceries_scraper.adapter.fingerprint import request_fingerprint
 from groceries_scraper.adapter.middlewares import PAGE_TYPE, request_metadata
 from groceries_scraper.adapter.settings import RECORDER, REPLAY
 from groceries_scraper.run import Run
+from groceries_scraper.run.directory import read_manifest
 from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.redaction import REDACTED
 
@@ -104,7 +105,7 @@ class SourceRun:
 
     @classmethod
     def _load(cls, path: Path) -> Self:
-        manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
+        manifest = read_manifest(path)
         config = manifest["config"]
         level = config["settings"]["record_level"]
         if level != "all":
