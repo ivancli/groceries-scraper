@@ -108,6 +108,10 @@ _Avoid_: Assertion, alert, monitor
 Re-running a **Run**'s crawl offline, serving responses from its **Captures** (matched by strict request fingerprint, minus the **Site**'s ignored params) instead of the network.
 _Avoid_: Re-run, offline mode, cache mode
 
+**Sink**:
+A destination outside the **Run** directory (Postgres, S3) that a finished **Run**'s **Records** are exported to.
+_Avoid_: Output, exporter, destination
+
 ## Relationships
 
 - A **Site** has one or more **Start Requests** and one or more **Page Types**
@@ -128,6 +132,7 @@ _Avoid_: Re-run, offline mode, cache mode
 - A **Record Type** has at most one **Record Key**; within a **Run** only the first **Record** per key is kept
 - Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
+- A **Run** is exported to zero or more **Sinks** after it finishes; a `failed` **Run** only when forced, and re-exporting replaces the **Sink**'s earlier copy
 
 ## Example dialogue
 

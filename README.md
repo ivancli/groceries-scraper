@@ -147,6 +147,21 @@ uv run scrape diff runs/aldi/<old_run_id> runs/aldi/<new_run_id> --json
 Run and Replay exit with `0` for healthy, `1` for degraded, and `2` for failed Run
 Health. Validation errors exit nonzero too. Check `run.json` for the reasons.
 
+## Export to Postgres or S3
+
+Install the extra for each backend, then pass `--sink` to `run`/`replay`, or export a
+saved Run later. Failed Runs are skipped unless `--force`; re-exporting replaces the
+earlier copy. `run` exits `3` if a Sink fails.
+
+```bash
+uv sync --locked --extra postgres --extra s3
+uv run scrape run sites/aldi.yaml --sink "postgres://user:pass@host/db"
+uv run scrape export runs/aldi/<run_id> --sink s3://my-bucket/scrapes
+```
+
+S3 credentials and region come from the standard AWS environment. See
+[design](docs/design.md#sinks) for the table and object layout.
+
 ## Save and test Golden Fixtures
 
 Finish a crawl without `--limit`, with recording enabled, then save it:
@@ -185,7 +200,7 @@ uv run mypy
 uv run pytest
 ```
 
-Multiple Sessions per Site, price history across many Runs, database/S3 sinks, schema contracts, and scheduled live checks are deferred.
+Multiple Sessions per Site, price history across many Runs, schema contracts, and scheduled live checks are deferred.
 Use HTML or JSON endpoints for now. Offline fixtures detect changes to extraction
 code and configs; they do not detect changes to the live website.
 
