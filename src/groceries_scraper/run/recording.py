@@ -11,7 +11,9 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config import Site
 from groceries_scraper.run.directory import Run
+from groceries_scraper.run.health import RunHealth
 from groceries_scraper.run.redaction import REDACTED, MetadataRedactor
+from groceries_scraper.run.stats import RunStats
 
 
 @dataclass(frozen=True)
@@ -46,13 +48,21 @@ class RunRecorder:
             if "headers" in template:
                 template["headers"] = self.redact_headers(template["headers"])
         canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        manifest = {
+        self._manifest = {
             "site": run.site,
             "run_id": run.run_id,
             "config": snapshot,
             "config_hash": hashlib.sha256(canonical.encode()).hexdigest(),
         }
-        (run.path / "run.json").write_text(_json(manifest), encoding="utf-8")
+        self._write_manifest()
+
+    def finish(self, stats: RunStats, health: RunHealth) -> None:
+        self._manifest["stats"] = stats.to_json()
+        self._manifest["health"] = {"status": health.status, "breaches": health.breaches}
+        self._write_manifest()
+
+    def _write_manifest(self) -> None:
+        (self.run.path / "run.json").write_text(_json(self._manifest), encoding="utf-8")
 
     def redact_headers(self, headers: dict[str, Any]) -> dict[str, Any]:
         return {

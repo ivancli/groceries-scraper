@@ -9,6 +9,7 @@ from groceries_scraper.run import Run
 RUN = "GROCERIES_RUN"
 RECORD_LIMIT = "GROCERIES_RECORD_LIMIT"
 RECORDER = "GROCERIES_RECORDER"
+STATS = "GROCERIES_STATS"
 
 
 def scrapy_settings(site: Site, run: Run, limit: int | None = None) -> dict[str, Any]:
