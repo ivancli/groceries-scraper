@@ -1304,19 +1304,6 @@ def test_a_browser_rendered_run_replays_offline_without_a_browser(
     )
 
 
-def test_an_unreachable_sink_exits_3_after_the_run_is_saved(
-    tmp_path: Path, shop: _ShopServer
-) -> None:
-    run_dir, log = _run_with_log(
-        tmp_path, shop, "--sink", "postgres://user:secret@127.0.0.1:1/scrapes", exit_code=3
-    )
-
-    assert "health: ok" in log
-    assert "was not exported to postgres://127.0.0.1:1/scrapes:" in log
-    assert "secret" not in log
-    assert len(_records(run_dir)) == PAGES * PER_PAGE
-
-
 @pytest.mark.skipif(
     "TEST_DATABASE_URL" not in os.environ, reason="set TEST_DATABASE_URL to a disposable database"
 )

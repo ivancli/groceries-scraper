@@ -24,7 +24,7 @@ def saved_run(
     if health is not None:
         manifest["health"] = {"level": health, "breaches": []}
     (path / "run.json").write_text(json.dumps(manifest))
-    for record_type, rows in records.items():
-        lines = [json.dumps({**row, "_meta": {"run_id": run_id}}) for row in rows]
+    for record_type, typed in records.items():
+        lines = [json.dumps({**record, "_meta": {"run_id": run_id}}) for record in typed]
         (path / "records" / f"{record_type}.jsonl").write_text("".join(f"{x}\n" for x in lines))
     return path

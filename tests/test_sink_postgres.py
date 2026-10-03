@@ -7,7 +7,8 @@ import psycopg
 import pytest
 from sink_runs import saved_run
 
-from groceries_scraper.run.sinks import RunExport, export_run, open_sink
+from groceries_scraper.run.directory import SavedRun
+from groceries_scraper.run.sinks import export_run, open_sink
 
 DSN = os.environ.get("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -48,7 +49,9 @@ def test_a_run_and_its_records_are_stored_with_record_keys_apart_from_meta(
         health="degraded",
     )
 
-    assert export_run(run, [open_sink(DSN or "")])
+    sink = open_sink(DSN or "")
+    sink.prepare()
+    assert export_run(run, [sink])
 
     run_id = "20260101T000000Z-abc123"
     assert _runs(db) == [("shop", run_id, "degraded", run_id)]
@@ -64,13 +67,38 @@ def test_re_exporting_a_run_replaces_only_that_runs_rows(
     tmp_path: Path, db: psycopg.Connection[tuple[Any, ...]]
 ) -> None:
     sink = open_sink(DSN or "")
+    sink.prepare()
     first = saved_run(tmp_path, {"product": [{"sku": "a"}]}, run_id="1")
     second = saved_run(tmp_path, {"product": [{"sku": "a"}, {"sku": "b"}]}, run_id="2")
-    sink.publish(RunExport.load(first))
-    sink.publish(RunExport.load(second))
+    sink.export(SavedRun.load(first))
+    sink.export(SavedRun.load(second))
     (second / "records/product.jsonl").write_text('{"sku": "c", "_meta": {}}\n')
 
-    sink.publish(RunExport.load(second))
+    sink.export(SavedRun.load(second))
 
     assert [row[:2] for row in _runs(db)] == [("shop", "1"), ("shop", "2")]
     assert [(row[0], row[3]) for row in _records(db)] == [("1", {"sku": "a"}), ("2", {"sku": "c"})]
+
+
+def test_prepare_creates_the_tables_once(db: psycopg.Connection[tuple[Any, ...]]) -> None:
+    sink = open_sink(DSN or "")
+
+    sink.prepare()
+    sink.prepare()
+
+    assert _runs(db) == []
+    assert _records(db) == []
+
+
+def test_nul_characters_postgres_cannot_store_are_replaced(
+    tmp_path: Path, db: psycopg.Connection[tuple[Any, ...]]
+) -> None:
+    run = saved_run(tmp_path, {"product": [{"sku": "a", "name": "x\u0000y", "tags": ["\u0000"]}]})
+    sink = open_sink(DSN or "")
+    sink.prepare()
+
+    sink.export(SavedRun.load(run))
+
+    assert [row[3] for row in _records(db)] == [
+        {"sku": "a", "name": "x\ufffdy", "tags": ["\ufffd"]}
+    ]

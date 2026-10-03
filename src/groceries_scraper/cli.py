@@ -7,7 +7,7 @@ import typer
 
 from groceries_scraper.config import ConfigError, Findings, Site, checked_site, load_checked_site
 from groceries_scraper.run import create_run
-from groceries_scraper.run.sinks import ExportError, Sink, export_run, open_sink
+from groceries_scraper.run.sinks import ExportError, Sink, SinkError, export_run, open_sink
 from groceries_scraper.run.summary import RunOutcome
 
 RUNS_DIR = Path("runs")
@@ -50,32 +50,34 @@ def _site_or_exit(load: Callable[[], tuple[Site, Findings]]) -> Site:
 
 def _open_sinks_or_exit(urls: list[str] | None) -> list[Sink]:
     try:
-        return [open_sink(url) for url in urls or []]
+        sinks = [open_sink(url) for url in urls or []]
+        for sink in sinks:
+            sink.prepare()
     except ExportError as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from None
+        raise typer.Exit(code=EXPORT_FAILED if isinstance(exc, SinkError) else 1) from None
+    return sinks
 
 
-def _export(run_dir: Path, sinks: list[Sink], force: bool = False) -> bool:
-    """Reports the outcome; False when the Run was skipped or a sink failed."""
+def _export(run_dir: Path, sinks: list[Sink], force: bool = False) -> int | None:
+    """The exit code when the Run was not exported."""
     try:
-        exported = export_run(run_dir, sinks, force)
+        if export_run(run_dir, sinks, force):
+            typer.echo(f"Exported Run {run_dir.name} to {', '.join(map(str, sinks))}", err=True)
+            return None
     except ExportError as exc:
         typer.echo(str(exc), err=True)
-        return False
-    if not exported:
-        typer.echo(f"Run {run_dir.name} failed: not exported (use --force)", err=True)
-        return False
-    typer.echo(f"Exported Run {run_dir.name} to {', '.join(map(str, sinks))}", err=True)
-    return True
+        return EXPORT_FAILED if isinstance(exc, SinkError) else 1
+    force_hint = f"force with `scrape export {run_dir} --force`"
+    typer.echo(f"Run {run_dir.name} failed: not exported ({force_hint})", err=True)
+    return 1
 
 
-def _finish(outcome: RunOutcome, run_dir: Path, sinks: list[Sink]) -> NoReturn:
+def _report_and_exit(outcome: RunOutcome, run_dir: Path, sinks: list[Sink]) -> NoReturn:
     typer.echo(outcome.summary())
-    exported = not sinks or _export(run_dir, sinks)
-    # A skipped failed Run already exits as failed; a broken sink needs its own code.
-    code = EXPORT_FAILED if not exported and outcome.health.level != "failed" else None
-    raise typer.Exit(code=code if code is not None else outcome.health.exit_code)
+    # Run Health's code can't say a Sink failed; a skipped failed Run keeps its own.
+    sink_failed = bool(sinks) and _export(run_dir, sinks) == EXPORT_FAILED
+    raise typer.Exit(code=EXPORT_FAILED if sink_failed else outcome.health.exit_code)
 
 
 def _warn(warnings: list[str]) -> None:
@@ -103,7 +105,7 @@ def run(
         )
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    _finish(crawl(site, new_run, limit), new_run.path, sinks)
+    _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks)
 
 
 @app.command()
@@ -131,7 +133,7 @@ def replay(
         site = _site_or_exit(lambda: checked_site(source.config, {}, str(run_dir)))
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
-    _finish(crawl(site, new_run, replay_of=source), new_run.path, sinks)
+    _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks)
 
 
 @app.command()
@@ -186,9 +188,9 @@ def export(
     ],
     force: Annotated[bool, typer.Option(help="Export even a failed Run.")] = False,
 ) -> None:
-    """Export a finished Run's Records to Postgres or S3, replacing any earlier export of it."""
-    if not _export(run_dir, _open_sinks_or_exit(sink), force):
-        raise typer.Exit(code=1)
+    """Export a finished Run to Postgres or S3; exits 1 if skipped/unreadable, 3 if a Sink fails."""
+    if code := _export(run_dir, _open_sinks_or_exit(sink), force):
+        raise typer.Exit(code=code)
 
 
 @fixture_app.command("save")
