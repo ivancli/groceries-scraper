@@ -2,6 +2,7 @@ import json
 import re
 from pathlib import Path
 
+import yaml
 from typer.testing import CliRunner, Result
 
 from groceries_scraper.cli import app
@@ -48,7 +49,11 @@ page_types:
 
 
 def test_validate_exits_non_zero_on_a_semantic_error(tmp_path: Path) -> None:
-    result = _validate(tmp_path, _design_example())
+    config = yaml.safe_load(_design_example())
+    config["page_types"]["product_api"]["fields"]["unit_price"][1] = {
+        "fn": "mypkg.transforms:parse_unit_price"
+    }
+    result = _validate(tmp_path, yaml.safe_dump(config))
 
     assert result.exit_code == 1
     assert result.stderr.splitlines()[1:] == [
@@ -56,6 +61,11 @@ def test_validate_exits_non_zero_on_a_semantic_error(tmp_path: Path) -> None:
         "cannot load `mypkg.transforms:parse_unit_price`: "
         "ModuleNotFoundError: No module named 'mypkg'"
     ]
+
+
+def test_validate_passes_the_documented_design_example(tmp_path: Path) -> None:
+    result = _validate(tmp_path, _design_example())
+    assert result.exit_code == 0, result.output
 
 
 def test_validate_exits_non_zero_on_a_schema_error(tmp_path: Path) -> None:

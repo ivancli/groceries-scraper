@@ -1,0 +1,41 @@
+# ALDI Australia's public product catalogue, following listing pagination.
+site: aldi
+settings:
+  download_delay: 1.0
+  record_level: all
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.aldi.com.au/products
+    page_type: listing
+page_types:
+  listing:
+    record: product
+    items:
+      each: {css: "a.product-tile__link[href^='/product/']"}
+    follow:
+      - select: {css: "a[data-test='next-page']::attr(href)"}
+        page_type: listing
+    fields:
+      url:
+        xpath: "concat('https://www.aldi.com.au', @href)"
+        type: string
+        required: true
+      name:
+        css: "[data-test='product-tile__name'] p::text"
+        type: string
+        required: true
+      brand:
+        css: "[data-test='product-tile__brandname'] p::text"
+        type: string
+      price:
+        xpath: "translate(substring-after(.//*[@data-test='product-tile__price']//span[@class='base-price__regular']/span[1], '$'), ',', '')"
+        type: number
+        required: true
+      currency: {template: AUD, type: string}
+      size: {css: "[data-test='product-tile__unit-of-measurement'] p::text"}
+      unit_price: {css: "[data-test='product-tile__comparison-price'] p::text"}

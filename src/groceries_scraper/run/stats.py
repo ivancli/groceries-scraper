@@ -83,6 +83,7 @@ class RunStats:
     def to_json(self) -> dict[str, Any]:
         return {
             "duration_seconds": round(self.duration_seconds, 3),
+            "finish_reason": self.finish_reason,
             "pages": dict(sorted(self.pages.items())),
             "records": dict(sorted(self.records.items())),
             "dropped": {"total": self.dropped, "by_reason": dict(self.drops_by_reason)},

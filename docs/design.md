@@ -97,7 +97,7 @@ page_types:
         fields:
           size:  {jsonpath: "$.size"}
           price: {jsonpath: "$.price", type: number}
-      unit_price: [{jsonpath: "$.cup"}, {fn: "mypkg.transforms:parse_unit_price"}]
+      unit_price: [{jsonpath: "$.cup"}, {regex: '([\d,.]+)'}, {replace: [",", ""]}]
 ```
 
 ## Semantics
@@ -224,8 +224,8 @@ runs/<site>/<run_id>/
 - Configured Health Checks breach → `degraded` (v1; per-check severity is a later concern).
 - A Run cut short by `--limit` skips the zero-Records and `min_records` checks.
 - `run.json` gains `stats` and `health` (`level` plus each breach's `check` and `detail`).
-  Stats: duration; pages per Page Type; Records written per Record Type; drops by reason
-  without list indices or bad values; null ratio per Record Type and Field path (nested
+  Stats: duration and finish reason; pages per Page Type; Records written per Record Type;
+  drops by reason without list indices or bad values; null ratio per Record Type and Field path (nested
   Fields only where their object or list element exists); page requests' final outcomes;
   HTTP status histogram over all Captures.
 - `max_dropped_ratio` divides drops by drops plus extracted Records (including those the
@@ -236,6 +236,8 @@ runs/<site>/<run_id>/
 - `scrape run` ends with a short summary on stdout and exits with the Run Health's code.
 
 ## CLI
+
+For installation and a runnable retailer example, see the [quickstart](../README.md).
 
 ```
 scrape validate sites/<site>.yaml
@@ -250,6 +252,14 @@ summary beside Field and Follow Rule Step outputs, labels errors, and prints the
 chain (marking parents omitted by `record_level: errors`). `--field` limits the trace to
 that Field and its nested paths. `--body` pretty-prints the response JSON/HTML, decoding
 gzip/deflate first; malformed JSON is shown as text so parsing failures can be inspected.
+
+`fixture save` requires a completed healthy Run without `--limit`, recorded at `all`.
+It copies Captures and the Run manifest to `tests/sites/<site>/`, and writes expected
+Records with volatile `_meta` fields (`run_id`, `scraped_at`, `capture_no`) removed,
+retaining stable metadata such as Site, Record Type and source URL. Re-saving replaces
+the fixture. The Site regression tests
+Replay each fixture against the current `sites/<site>.yaml` with network connections
+refused, comparing Records independently of crawl order and rejecting missing Captures.
 
 ## Deferred (post-v1)
 Playwright (`render: browser`) · Record schema contracts · multiple Sessions per Site · Record Key dedup/diffing (price history) · output sinks (DB/S3) · nightly live smoke runs.

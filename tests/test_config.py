@@ -43,7 +43,7 @@ def test_full_design_example_parses(tmp_path: Path) -> None:
     assert fields["images"].items is not None
     assert fields["nutrition"].fields["kcal"].type == "integer"
     assert fields["variants"].each[0].jsonpath == "$.variants[*]"
-    assert [step.kind for step in fields["unit_price"].pipe] == ["jsonpath", "fn"]
+    assert [step.kind for step in fields["unit_price"].pipe] == ["jsonpath", "regex", "replace"]
 
 
 def _site(**sections: Any) -> dict[str, Any]:

@@ -1,0 +1,93 @@
+{
+  "capture_no": 4,
+  "page_type": "listing",
+  "parent_capture_no": 3,
+  "variables": {
+    "session": {}
+  },
+  "request": {
+    "method": "GET",
+    "fingerprint": "scrapy-sha1-v1:c67d69e9f9fbc921fe2a61a31f456e95bfa20a25",
+    "url": "https://www.aldi.com.au/products?page=4",
+    "headers": {
+      "Referer": [
+        "https://www.aldi.com.au/products?page=3"
+      ],
+      "Accept": [
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      ],
+      "Accept-Language": [
+        "en"
+      ],
+      "User-Agent": [
+        "Scrapy/2.19.0 (+https://scrapy.org)"
+      ],
+      "Accept-Encoding": [
+        "gzip, deflate, br, zstd"
+      ]
+    },
+    "body": "",
+    "body_encoding": "base64"
+  },
+  "response": {
+    "url": "https://www.aldi.com.au/products?page=4",
+    "status": 200,
+    "headers": {
+      "Cache-Control": [
+        "public, max-age=600"
+      ],
+      "Content-Encoding": [
+        "gzip"
+      ],
+      "Content-Security-Policy": [
+        "script-src https://*.cookielaw.org https://*.onetrust.com 'unsafe-inline' https://fe.au.prod.commerce.ci-aldi.com https://fe.au.prod.commerce.ci-aldi.com/payment-initiation https://applepay.cdn-apple.com https://tags.tiqcdn.com https://*.tealiumiq.com https://assets.adobedtm.com https://*.demdex.net https://cm.everesttech.net https://*.dynatrace.com 'self' https://*.googletagmanager.com https://*.googleadservices.com https://*.googlesyndication.com https://*.google.com https://*.doubleclick.net https://*.doubleclick.com https://cdn.brcdn.com https://www.youtube.com https://locator.uberall.com https://*.mapbox.com https://*.2o7.net https://*.omtrdc.net https://*.adobe.com https://connect.facebook.net https://*.adsrvr.org https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us https://ads.tiktok.com https://p.teads.tv; connect-src https://*.cookielaw.org https://*.onetrust.com 'self' https://account.aldi.com.au https://publish.prod.apac.cms.aldi.cx https://asl.api.aldi.com.au https://fe.au.prod.commerce.ci-aldi.com https://fe.au.prod.commerce.ci-aldi.com/payment-initiation https://applepay.cdn-apple.com https://tags.tiqcdn.com https://*.tealiumiq.com https://*.demdex.net https://cm.everesttech.net https://assets.adobedtm.com https://*.tt.omtrdc.net https://aldisued.d3.sc.omtrdc.net https://*.dynatrace.com https://*.googleadservices.com https://*.google.com https://google.com https://*.googletagmanager.com https://*.googlesyndication.com https://*.doubleclick.net https://*.doubleclick.com https://cdn.brcdn.com https://locator.uberall.com https://*.mapbox.com https://uberall.com https://www.facebook.com https://insight.adsrvr.org https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us https://ads.tiktok.com https://t.teads.tv https://cm.teads.tv; form-action https://www.ipg-online.com https://fe.au.prod.commerce.ci-aldi.com https://fe.au.prod.commerce.ci-aldi.com/payment-initiation https://fe.au.prod.commerce.ci-aldi.com/payment-balance-check 'self' https://www.facebook.com; frame-ancestors https://account.aldi.com.au https://aldisued.marketing.adobe.com https://experience.adobe.com; frame-src https://www.youtube.com * blob: data:; default-src 'self'; font-src * blob: data:; img-src * blob: data:; style-src * blob: data: 'unsafe-inline'; worker-src 'self' blob:;"
+      ],
+      "Content-Type": [
+        "text/html;charset=utf-8"
+      ],
+      "Feature-Policy": [
+        "bluetooth 'none'; camera 'none'; display-capture 'none'; hid 'none'; idle-detection 'none'; keyboard-map 'none'; local-fonts 'none'; microphone 'none'; midi 'none'; screen-wake-lock 'none'; serial 'none'; sync-xhr 'none'; usb 'none'; xr-spatial-tracking 'none'; accelerometer 'self' https://www.youtube.com; autoplay 'self' https://www.youtube.com; clipboard-write 'self' https://www.youtube.com; encrypted-media 'self' https://www.youtube.com; fullscreen 'self' https://www.youtube.com; geolocation 'self'; gyroscope 'self' https://www.youtube.com; picture-in-picture 'self' https://www.youtube.com; web-share 'self' https://www.youtube.com; payment 'none'"
+      ],
+      "Permissions-Policy": [
+        "bluetooth=(), camera=(), display-capture=(), hid=(), idle-detection=(), keyboard-map=(), local-fonts=(), microphone=(), midi=(), screen-wake-lock=(), serial=(), sync-xhr=(), usb=(), xr-spatial-tracking=(), accelerometer=(self \"https://www.youtube.com\"), autoplay=(self \"https://www.youtube.com\"), clipboard-write=(self \"https://www.youtube.com\"), encrypted-media=(self \"https://www.youtube.com\"), fullscreen=(self \"https://www.youtube.com\"), geolocation=(self), gyroscope=(self \"https://www.youtube.com\"), picture-in-picture=(self \"https://www.youtube.com\"), web-share=(self \"https://www.youtube.com\"), payment=()"
+      ],
+      "Referrer-Policy": [
+        "same-origin"
+      ],
+      "Server-Timing": [
+        "dtTrId;desc=\"677a3d5a5b327f9bf30831872e3e2fc6\", dtSInfo;desc=\"0\"",
+        "dtRpid;desc=\"1024978492\""
+      ],
+      "X-Content-Type-Options": [
+        "nosniff"
+      ],
+      "X-Frame-Options": [
+        "SAMEORIGIN"
+      ],
+      "X-Oneagent-Js-Injection": [
+        "true"
+      ],
+      "X-Ruxit-Js-Agent": [
+        "true"
+      ],
+      "X-Xss-Protection": [
+        "1; mode=block"
+      ],
+      "Date": [
+        "Sat, 03 Oct 2026 03:44:03 GMT"
+      ],
+      "Set-Cookie": "[REDACTED]",
+      "Vary": [
+        "Accept-Encoding, X-Target-Device, Cookie, Accept-Language"
+      ],
+      "Strict-Transport-Security": [
+        "max-age=15768000 ; includeSubDomains ; preload"
+      ]
+    },
+    "timing": {
+      "started_at": "2026-10-03T03:43:59.829209+00:00",
+      "finished_at": "2026-10-03T03:44:02.287470+00:00",
+      "elapsed_seconds": 2.45826752303401
+    }
+  }
+}

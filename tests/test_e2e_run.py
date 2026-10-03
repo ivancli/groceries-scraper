@@ -461,6 +461,7 @@ def test_a_healthy_run_saves_stats_and_health_and_exits_0(
     stats = manifest["stats"]
     assert stats["duration_seconds"] > 0
     assert {key: value for key, value in stats.items() if key != "duration_seconds"} == {
+        "finish_reason": "finished",
         "pages": {"listing": 3, "product": 5},  # HTTP errors never reach a Page Type
         "records": {"product": 5},
         "dropped": {"total": 0, "by_reason": {}},
