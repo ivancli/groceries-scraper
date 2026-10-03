@@ -132,6 +132,12 @@ FIELD_KEYS = {"type", "required", "default", "fields", "items", "each"}
 FieldTypeName = Literal["string", "number", "integer", "boolean", "object", "array"]
 
 
+def _check_scalar_items(items: FieldSpec | ContractField) -> None:
+    # The engine only coerces each match; anything else in `items` would be ignored.
+    if items.type in ("object", "array") or items.model_fields_set - {"type"}:
+        raise _config_error("an array Field's `items` only takes a scalar `type`")
+
+
 class FieldSpec(_Model):
     type: FieldTypeName | None = None
     required: bool = False
@@ -164,11 +170,8 @@ class FieldSpec(_Model):
                 raise _config_error("an array Field with `each` needs `fields`")
             if has_items and self.fields:
                 raise _config_error("an array Field with `items` cannot have `fields`")
-            # The engine only coerces each match; anything else in `items` would be ignored.
-            if self.items is not None and (
-                self.items.type in ("object", "array") or self.items.model_fields_set - {"type"}
-            ):
-                raise _config_error("an array Field's `items` only takes a scalar `type`")
+            if self.items is not None:
+                _check_scalar_items(self.items)
         elif self.type == "object":
             if not self.fields:
                 raise _config_error("an object Field needs `fields`")
@@ -294,7 +297,7 @@ class Replay(_Model):
 
 
 class ContractField(_Model):
-    """A Field as a Record Type's contract declares it; an array of objects takes `fields`."""
+    """A Field in a Record Contract; an array of objects takes `fields` (no `each`)."""
 
     type: FieldTypeName
     required: bool = False
@@ -306,10 +309,8 @@ class ContractField(_Model):
         if self.type == "array":
             if (self.items is None) == (not self.fields):
                 raise _config_error("an array Field needs exactly one of `items` or `fields`")
-            if self.items is not None and (
-                self.items.type in ("object", "array") or self.items.model_fields_set - {"type"}
-            ):
-                raise _config_error("an array Field's `items` only takes a scalar `type`")
+            if self.items is not None:
+                _check_scalar_items(self.items)
         elif self.type == "object":
             if not self.fields:
                 raise _config_error("an object Field needs `fields`")
@@ -322,7 +323,7 @@ class ContractField(_Model):
 
 class RecordType(_Model):
     key: list[str] = Field(default_factory=list)  # a Record Type has at most one Record Key
-    # None: no contract, so emitting Page Types aren't checked against one.
+    # None: no Record Contract.
     fields: Annotated[dict[str, ContractField], Field(min_length=1)] | None = None
 
 

@@ -102,10 +102,9 @@ def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
     for record_type, spec in site.records.items():
         if spec.fields is None:
             continue
+        contract = _Contract(findings, record_type)
         for name in sorted(emitters[record_type]):
-            page_fields = site.page_types[name].fields
-            contract = _Contract(findings, record_type)
-            contract.fields(f"page_types.{name}.fields", spec.fields, page_fields)
+            contract.check(f"page_types.{name}.fields", spec.fields, site.page_types[name].fields)
     findings.errors += [
         f"health.min_records.{record_type}: {_not_emitted(record_type)}"
         for record_type in site.health.min_records
@@ -121,46 +120,49 @@ def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
 
 @dataclass
 class _Contract:
-    """Checks a Page Type's Fields against its Record Type's contract: closed and exact."""
+    """Checks a Page Type's Fields against its Record Type's Record Contract: closed and exact."""
 
     findings: Findings
     record_type: str
 
-    def fields(
+    def check(
         self, prefix: str, contract: dict[str, ContractField], specs: dict[str, FieldSpec]
     ) -> None:
         for name, wanted in contract.items():
             if name in specs:
                 self._field(f"{prefix}.{name}", wanted, specs[name])
             else:
-                self._error(f"{prefix}.{name}", f"missing; {self._rt}'s contract declares it")
+                self._error(f"{prefix}.{name}", f"missing; {self._label}'s contract declares it")
         for name in specs:
             if name not in contract:
-                self._error(f"{prefix}.{name}", f"not in {self._rt}'s contract")
+                self._error(f"{prefix}.{name}", f"not in {self._label}'s contract")
 
     def _field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
         if spec.type != wanted.type:
             got = f"type `{spec.type}`" if spec.type else "no type"
-            self._error(path, f"{got}, but {self._rt}'s contract says `{wanted.type}`")
+            self._error(path, f"{got}, but {self._label}'s contract says `{wanted.type}`")
             return  # nested Fields of a different type would only add noise
         # A stricter emitter is fine: optional in the contract only allows nulls.
         if wanted.required and not spec.required:
-            self._error(path, f"{self._rt}'s contract requires `required: true`")
+            self._error(path, f"{self._label}'s contract requires `required: true`")
         if (wanted.items is None) != (spec.items is None):
-            shapes = {True: "array of scalars (`items`)", False: "array of objects (`fields`)"}
-            got, says = shapes[spec.items is not None], shapes[wanted.items is not None]
-            self._error(path, f"{got}, but {self._rt}'s contract says {says}")
+            got, says = _array_shape(spec.items), _array_shape(wanted.items)
+            self._error(path, f"{got}, but {self._label}'s contract says {says}")
         elif wanted.items is not None and spec.items is not None:
             self._field(f"{path}.items", wanted.items, spec.items)
         else:
-            self.fields(f"{path}.fields", wanted.fields, spec.fields)
+            self.check(f"{path}.fields", wanted.fields, spec.fields)
 
     @property
-    def _rt(self) -> str:
+    def _label(self) -> str:
         return f"Record Type `{self.record_type}`"
 
     def _error(self, path: str, message: str) -> None:
         self.findings.errors.append(f"{path}: {message}")
+
+
+def _array_shape(items: object) -> str:
+    return "array of scalars (`items`)" if items is not None else "array of objects (`fields`)"
 
 
 def _not_emitted(record_type: str) -> str:

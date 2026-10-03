@@ -456,7 +456,7 @@ def test_health_checks_must_name_known_record_types_and_fields() -> None:
     ]
 
 
-# --- Record schema contracts ------------------------------------------------
+# --- Record Contracts ------------------------------------------------------
 
 
 def _contracted(page_fields: dict[str, Any], contract: dict[str, Any]) -> list[str]:
@@ -543,4 +543,19 @@ def test_nested_fields_are_checked_against_the_contract() -> None:
         "contract says `string`",
         "page_types.pdp.fields.tags: array of scalars (`items`), but Record Type `product`'s "
         "contract says array of objects (`fields`)",
+    ]
+
+
+def test_every_reachable_emitter_is_checked_but_unreachable_ones_are_not() -> None:
+    page_types = {
+        **_emitting("sku"),
+        "orphan": {"record": "product", "fields": {"name": {"css": "b::text"}}},
+    }
+    contract = {"sku": {"type": "string"}}
+
+    errors = _errors(page_types, records={"product": {"fields": contract}})
+
+    assert errors == [
+        "page_types.api.fields.sku: no type, but Record Type `product`'s contract says `string`",
+        "page_types.pdp.fields.sku: no type, but Record Type `product`'s contract says `string`",
     ]

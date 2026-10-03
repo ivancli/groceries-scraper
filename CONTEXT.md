@@ -41,7 +41,7 @@ The **Field**(s) that identify the same real-world thing across **Runs** (e.g. `
 _Avoid_: ID, primary key, unique key
 
 **Record Contract**:
-The Fields, types and required flags declared once for a **Record Type**, which every **Page Type** emitting it must match exactly.
+The **Fields**, types and required flags declared once for a **Record Type**, which every **Page Type** emitting it must match exactly.
 _Avoid_: Schema, model
 
 **Field**:
