@@ -35,6 +35,12 @@ def scrapy_settings(
     }
     if limit is not None:
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
+    # Replay serves rendered Captures, so it never needs a browser.
+    if replay is None and any(page.render == "browser" for page in site.page_types.values()):
+        # Requests without the browser meta key still go through Scrapy's HTTP handler.
+        handler = "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"
+        settings["DOWNLOAD_HANDLERS"] = {"http": handler, "https": handler}
+        settings["TWISTED_REACTOR"] = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
     if replay is not None:
         settings[REPLAY] = replay
         # After CaptureMiddleware's process_request, so served Captures are timed and recorded.

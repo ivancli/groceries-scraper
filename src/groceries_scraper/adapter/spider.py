@@ -12,6 +12,7 @@ from scrapy.spidermiddlewares.httperror import HttpError
 from twisted.python.failure import Failure
 
 from groceries_scraper.adapter.middlewares import (
+    BROWSER,
     CAPTURE,
     PAGE_TYPE,
     PARENT_CAPTURE,
@@ -96,9 +97,16 @@ class SiteSpider(scrapy.Spider):
                 PAGE_TYPE: follow.page_type,
                 VARIABLES: variables,
                 PARENT_CAPTURE: follow.parent_ref,
+                **self._render_meta(follow.page_type),
             },
             dont_filter=retry,  # the dupe filter saw the original
         )
+
+    def _render_meta(self, page_type: str) -> dict[str, Any]:
+        if self.site.page_types[page_type].render != "browser":
+            return {}
+        # Network idle: scripts that fetch content after `load` have finished rendering it.
+        return {BROWSER: True, "playwright_page_goto_kwargs": {"wait_until": "networkidle"}}
 
     def _on_response(
         self, response: Response, follow: FollowRequest, generation: int

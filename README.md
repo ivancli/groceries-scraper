@@ -13,6 +13,7 @@ repository and install its locked dependencies:
 git clone https://github.com/ivancli/groceries-scraper.git
 cd groceries-scraper
 uv sync --locked
+uv run playwright install chromium  # for `render: browser` Page Types and the test suite
 ```
 
 The project uses Python 3.12 (`.python-version`); uv can install it if needed.
@@ -62,6 +63,8 @@ producing Records, use Captures and Traces to update its selectors.
 1. Inspect the response HTML or JSON for the page/API you want to scrape. Browser
    developer tools' Network panel helps identify JSON endpoints and request bodies.
    Selectors must match the downloaded response, which can differ from the browser DOM.
+   If a page only shows its content after scripts run and no JSON API serves it, set the
+   Page Type's `render: browser` to extract from the DOM rendered by headless Chromium.
 2. Create `sites/<site>.yaml`. Use a simple Site name containing letters, numbers,
    underscores, or hyphens so it can also be saved as a Golden Fixture.
 3. Define `start` URLs and their `page_type`. Start Requests are GET requests.

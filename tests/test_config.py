@@ -191,6 +191,18 @@ A_RULE = {"select": {"css": "a::attr(href)"}, "page_type": "listing"}
             "a Request Template takes one of `json`, `form` or `body`",
             id="two-request-bodies",
         ),
+        pytest.param(
+            _site(page_types={"listing": {"response": "json", "render": "browser"}}),
+            "page_types.listing",
+            "`render: browser` needs `response: html`",
+            id="browser-render-of-json",
+        ),
+        pytest.param(
+            _site(page_types={"listing": {"render": "chrome"}}),
+            "page_types.listing.render",
+            "Input should be 'http' or 'browser'",
+            id="unknown-render",
+        ),
     ],
 )
 def test_invalid_config_reports_yaml_path(data: dict[str, Any], path: str, message: str) -> None:

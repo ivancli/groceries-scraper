@@ -4,7 +4,7 @@ Terminology: see [`CONTEXT.md`](../CONTEXT.md). Architecture: see [ADR-0001](adr
 
 ## Stack
 
-Python 3.12 · `uv` · Scrapy 2.x · Pydantic v2 · `jsonpath-ng` (ext parser) · Jinja2 (`jinja2.sandbox`) · Typer · pytest · ruff · mypy.
+Python 3.12 · `uv` · Scrapy 2.x · scrapy-playwright (`render: browser`) · Pydantic v2 · `jsonpath-ng` (ext parser) · Jinja2 (`jinja2.sandbox`) · Typer · pytest · ruff · mypy.
 
 ## Layout
 
@@ -59,6 +59,7 @@ start:
 page_types:
   listing:
     response: html             # html | json
+    render: http               # http | browser (rendered DOM; see Browser rendering)
     items:
       each: {css: "div.tile"}  # page-level Loop (no record: -> navigation only)
     follow:
@@ -132,6 +133,19 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - Scopes: `session.*` (Session Setup), bare names (passed along the chain by `pass:`), `env.*` (environment; secrets never live in YAML).
 - Templates: `jinja2.sandbox.SandboxedEnvironment`, `StrictUndefined`.
 - In a `json` request body, a value that is exactly one `{{ expr }}` keeps the expression's type (`"{{ page }}"` → `2`; `"{{ text | int }}"` for scraped text); anything else renders to a string.
+
+### Browser rendering
+- `render: browser` loads a Page Type's requests in headless Chromium via scrapy-playwright and
+  extracts from the rendered DOM, captured once the network is idle. It needs `response: html`;
+  prefer a JSON API where the site has one.
+- Only Page Types opt in: Session Setup, robots.txt and other Page Types stay plain HTTP, and
+  a Site without browser Page Types never starts a browser.
+- The browser sends the request's method, headers (including Session cookies) and body for the
+  page itself; its subresources use the browser's own headers. Redirects happen inside the
+  browser, so the Capture is the final page.
+- Its Capture has `render: browser`; the `.body` is the rendered DOM (no `Content-Encoding`), not
+  the server's bytes. Replay serves it like any Capture, without a browser.
+- Setup: `uv run playwright install chromium` (CI installs it too).
 
 ### Session (v1)
 - One Session per Site Run; cookies via Scrapy cookie middleware.
@@ -262,4 +276,4 @@ Replay each fixture against the current `sites/<site>.yaml` with network connect
 refused, comparing Records independently of crawl order and rejecting missing Captures.
 
 ## Deferred (post-v1)
-Playwright (`render: browser`) · Record schema contracts · multiple Sessions per Site · Record Key dedup/diffing (price history) · output sinks (DB/S3) · nightly live smoke runs.
+Browser waits beyond network idle (e.g. for a selector) · Record schema contracts · multiple Sessions per Site · Record Key dedup/diffing (price history) · output sinks (DB/S3) · nightly live smoke runs.

@@ -21,6 +21,8 @@ PAGE_TYPE = "groceries_page_type"
 VARIABLES = "groceries_variables"
 PARENT_CAPTURE = "groceries_parent_capture"
 CAPTURE = "groceries_capture"
+# scrapy-playwright's own key: its download handler renders requests carrying it.
+BROWSER = "playwright"
 _STARTED = "groceries_capture_started"
 
 
@@ -35,6 +37,7 @@ def request_metadata(request: Request, ignore_params: frozenset[str]) -> dict[st
     """A page request's unredacted Capture metadata, before any response."""
     return {
         "page_type": request.meta[PAGE_TYPE],
+        **({"render": "browser"} if request.meta.get(BROWSER) else {}),
         "parent_capture_no": request.meta.get(PARENT_CAPTURE),
         "variables": request.meta.get(VARIABLES, {}),
         "request": {
