@@ -8,7 +8,7 @@ from typing import IO, Self
 from scrapy.crawler import Crawler
 from scrapy.exceptions import DropItem
 
-from groceries_scraper.adapter.settings import RECORD_LIMIT, RUN, STATS
+from groceries_scraper.adapter.settings import RECORD_LIMIT, RECORDER, RUN
 from groceries_scraper.engine.extract import Record
 from groceries_scraper.run import Run
 from groceries_scraper.run.stats import RunStats
@@ -33,7 +33,8 @@ class RecordPipeline:
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> Self:
-        return cls(crawler.settings[RUN], crawler.settings[RECORD_LIMIT], crawler.settings[STATS])
+        stats = crawler.settings[RECORDER].stats
+        return cls(crawler.settings[RUN], crawler.settings[RECORD_LIMIT], stats)
 
     def process_item(self, item: object) -> object:
         if not isinstance(item, EmittedRecord):

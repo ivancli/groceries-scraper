@@ -11,9 +11,9 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config import Site
 from groceries_scraper.run.directory import Run
-from groceries_scraper.run.health import RunHealth
 from groceries_scraper.run.redaction import REDACTED, MetadataRedactor
 from groceries_scraper.run.stats import RunStats
+from groceries_scraper.run.summary import RunOutcome
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,7 @@ class Capture:
 class RunRecorder:
     def __init__(self, run: Run, site: Site) -> None:
         self.run = run
+        self.stats = RunStats.for_site(site)
         self.level = site.settings.record_level
         self.ignore_params = frozenset(site.replay.ignore_params)
         self._sensitive_headers = frozenset(
@@ -56,9 +57,8 @@ class RunRecorder:
         }
         self._write_manifest()
 
-    def finish(self, stats: RunStats, health: RunHealth) -> None:
-        self._manifest["stats"] = stats.to_json()
-        self._manifest["health"] = {"status": health.status, "breaches": health.breaches}
+    def finish(self, outcome: RunOutcome) -> None:
+        self._manifest.update(outcome.to_json())
         self._write_manifest()
 
     def _write_manifest(self) -> None:

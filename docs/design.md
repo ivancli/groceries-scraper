@@ -209,11 +209,19 @@ runs/<site>/<run_id>/
 
 ## Run Health
 - `ok` / `degraded` / `failed` → exit codes 0 / 1 / 2.
-- Built-in `failed`: Session Setup failed, or zero Records for any declared Record Type.
+- Built-in `failed`: Session Setup failed, the Run closed early (any close reason but
+  `finished` or the `--limit` being reached), or zero Records for any declared Record Type.
 - Configured Health Checks breach → `degraded` (v1; per-check severity is a later concern).
-- `run.json` gains `stats` (duration; pages per Page Type; Records per Record Type; drops
-  by detail-free reason; null ratio per top-level Field over written Records; HTTP status
-  histogram over all Captures) and `health` (`status` plus every breach). Ratios with an
+- A Run cut short by `--limit` skips the zero-Records and `min_records` checks.
+- `run.json` gains `stats` and `health` (`level` plus each breach's `check` and `detail`).
+  Stats: duration; pages per Page Type; Records written per Record Type; drops by reason
+  without list indices or bad values; null ratio per Record Type and Field path (nested
+  Fields only where their object or list element exists); page requests' final outcomes;
+  HTTP status histogram over all Captures.
+- `max_dropped_ratio` divides drops by drops plus extracted Records (including those the
+  limit cut). `max_http_error_ratio` uses page requests' final outcomes: HTTP errors and
+  network errors after retries, and refreshes given up; requests robots.txt disallowed
+  are not counted. `max_null_ratio` checks each Record Type with that Field. Ratios with an
   empty denominator are 0; `max_*` checks breach only above their threshold.
 - `scrape run` ends with a short summary on stdout and exits with the Run Health's code.
 

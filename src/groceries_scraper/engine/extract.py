@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from parsel import Selector
 
@@ -21,7 +21,7 @@ class DroppedRecord:
     index: int
     reason: str
     # Detail-free reasons, so Run stats can count drops without one key per bad value.
-    causes: tuple[str, ...] = ()
+    reason_kinds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,15 +48,30 @@ def extract(page_type: PageType, scopes: list[Any], ctx: PipeContext) -> Extract
         fields = _Fields(ctx, result.trace, index)
         data = fields.evaluate(page_type.fields, node, "")
         if fields.missing:
-            reasons = [reason for reason, _ in fields.missing]
-            causes = tuple(cause for _, cause in fields.missing)
-            result.dropped.append(DroppedRecord(index, "; ".join(reasons), causes))
+            reason = "; ".join(missing.reason for missing in fields.missing)
+            kinds = tuple(missing.kind for missing in fields.missing)
+            result.dropped.append(DroppedRecord(index, reason, kinds))
         else:
             result.records.append(Record(page_type.record, data))
     return result
 
 
-_INDEX = re.compile(r"\[\d+\]")
+_LIST_INDEX = re.compile(r"\[\d+\]")
+
+
+class _Missing(NamedTuple):
+    reason: str
+    kind: str  # the reason without list indices or bad values
+
+
+def _missing(path: str, error: str | None) -> _Missing:
+    state = "invalid" if error else "missing"
+    detail = f": {error}" if error else ""
+    return _Missing(
+        f"required Field `{path}` is {state}{detail}",
+        f"required Field `{_LIST_INDEX.sub('[]', path)}` is {state}",
+    )
+
 
 # Distinct from None so `default` applies only when nothing matched, not after a failed Coercion.
 _NO_MATCH: Any = object()
@@ -67,7 +82,7 @@ class _Fields:
     ctx: PipeContext
     trace: list[FieldTrace]
     record: int
-    missing: list[tuple[str, str]] = field(default_factory=list)  # (reason, cause)
+    missing: list[_Missing] = field(default_factory=list)
 
     def evaluate(self, specs: dict[str, FieldSpec], scope: Any, prefix: str) -> dict[str, Any]:
         return {name: self._field(f"{prefix}{name}", spec, scope) for name, spec in specs.items()}
@@ -85,12 +100,9 @@ class _Fields:
         if value is _NO_MATCH:
             value = spec.default
         if value is None and spec.required:
-            cause = f"required Field `{_INDEX.sub('[]', path)}` is " + (
-                "invalid" if error else "missing"
-            )
-            reason = f"required Field `{path}` is " + (f"invalid: {error}" if error else "missing")
-            self._trace(path, [], reason)
-            self.missing.append((reason, cause))
+            missing = _missing(path, error)
+            self._trace(path, [], missing.reason)
+            self.missing.append(missing)
         return value
 
     def _object(self, path: str, spec: FieldSpec, scope: Any) -> Any:

@@ -12,9 +12,8 @@ from scrapy.http import Response
 from scrapy.http.headers import Headers
 
 from groceries_scraper.adapter.fingerprint import request_fingerprint
-from groceries_scraper.adapter.settings import RECORDER, STATS
+from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.run.recording import Capture, RunRecorder
-from groceries_scraper.run.stats import RunStats
 
 # Request meta: the statuses the spider answers with a Session refresh (page requests only).
 REFRESH_ON = "groceries_refresh_on"
@@ -33,14 +32,13 @@ def _headers(headers: Headers) -> dict[str, list[str]]:
 
 
 class CaptureMiddleware:
-    def __init__(self, recorder: RunRecorder, stats: RunStats) -> None:
+    def __init__(self, recorder: RunRecorder) -> None:
         self.recorder = recorder
-        self.stats = stats
         self._capture_nos = itertools.count(1)
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> Self:
-        return cls(crawler.settings[RECORDER], crawler.settings[STATS])
+        return cls(crawler.settings[RECORDER])
 
     def process_request(self, request: Request) -> None:
         if PAGE_TYPE in request.meta:
@@ -51,7 +49,7 @@ class CaptureMiddleware:
         if PAGE_TYPE not in request.meta:  # Scrapy's robots.txt request isn't a Page Type.
             return response
         capture_no = next(self._capture_nos)
-        self.stats.add_response(response.status)
+        self.recorder.stats.add_response(response.status)
         started_at, started = request.meta[_STARTED]
         page_type = request.meta[PAGE_TYPE]
         request_headers, response_headers = _headers(request.headers), _headers(response.headers)
