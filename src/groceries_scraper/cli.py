@@ -1,9 +1,10 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 
-from groceries_scraper.config import ConfigError, Site, load_checked_site
+from groceries_scraper.config import ConfigError, Findings, Site, checked_site, load_checked_site
 from groceries_scraper.run import create_run
 
 RUNS_DIR = Path("runs")
@@ -26,8 +27,12 @@ def validate(site_config: Path) -> None:
 
 
 def _load_site_or_exit(site_config: Path) -> Site:
+    return _site_or_exit(lambda: load_checked_site(site_config))
+
+
+def _site_or_exit(load: Callable[[], tuple[Site, Findings]]) -> Site:
     try:
-        site, findings = load_checked_site(site_config)
+        site, findings = load()
     except ConfigError as exc:
         _warn(exc.findings.warnings)
         typer.echo(str(exc), err=True)
@@ -69,8 +74,27 @@ def replay(
     run_dir: Path,
     config: Annotated[Path | None, typer.Option(help="Edited Site config.")] = None,
 ) -> None:
-    """Replay a prior Run's Captures as a new Run."""
-    _not_implemented("replay")
+    """Replay a prior Run's Captures offline as a new Run; exits like `run`."""
+    from groceries_scraper.adapter.crawl import crawl
+    from groceries_scraper.adapter.replay import ReplayError, SourceRun
+
+    try:
+        source = SourceRun.load(run_dir)
+    except ReplayError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if config is not None:
+        site = _load_site_or_exit(config)
+        if frozenset(site.replay.ignore_params) != source.index.ignore_params:
+            _warn(["replay.ignore_params differs from the source Run's, which Replay matches by"])
+    else:
+        # The snapshot already holds the defaults the source Run ran with.
+        site = _site_or_exit(lambda: checked_site(source.config, {}, str(run_dir)))
+    new_run = create_run(RUNS_DIR, site.site)
+    typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
+    outcome = crawl(site, new_run, replay_of=source)
+    typer.echo(outcome.summary())
+    raise typer.Exit(code=outcome.health.exit_code)
 
 
 @app.command()

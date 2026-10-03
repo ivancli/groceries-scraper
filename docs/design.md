@@ -205,7 +205,17 @@ runs/<site>/<run_id>/
   inputs. Legacy Captures without a fingerprint may be indexed from an original URL;
   a redacted legacy URL cannot safely reconstruct a fingerprint and must be rejected.
 - Replay serves responses from a prior Run's Captures; unmatched requests are recorded as `missing`, never fetched.
-- Replay produces a **new** Run (optionally with an edited config).
+  Requests sharing a fingerprint (retries, Session refreshes) get its Captures in Capture
+  order, then the last one again. Served responses use the request's URL and drop
+  `[REDACTED]` header values. robots.txt is not consulted and there is no download delay.
+- The source Run must have `record_level: all`. Without `--config`, its config snapshot is
+  replayed (redacted header templates send `[REDACTED]`; headers never affect matching).
+- Replay produces a **new** Run (optionally with an edited config). Its `run.json` adds
+  `replay_of` (`site`, `run_id`) and `missing` (redacted request metadata, as in Captures);
+  `stats.requests.missing` counts them. Missing requests are not HTTP errors and do not
+  affect Run Health. A redirect whose `Location` was partly redacted cannot be followed.
+- An edited config's `replay.ignore_params` applies to the new Run's Captures only; a
+  difference from the source Run's is warned about.
 
 ## Run Health
 - `ok` / `degraded` / `failed` → exit codes 0 / 1 / 2.

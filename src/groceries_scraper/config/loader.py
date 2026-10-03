@@ -32,10 +32,14 @@ def load_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> Site:
 
 def load_checked_site(path: Path, defaults_path: Path = DEFAULTS_PATH) -> tuple[Site, Findings]:
     """`load_site` plus semantic checks: what every command runs first."""
-    site = load_site(path, defaults_path)
+    return checked_site(_read_yaml(path), _read_yaml(defaults_path), str(path))
+
+
+def checked_site(data: Any, defaults: Any, source: str = "<site>") -> tuple[Site, Findings]:
+    site = parse_site(data, defaults, source)
     findings = check_site(site)
     if findings.errors:
-        raise ConfigError(str(path), findings)
+        raise ConfigError(source, findings)
     return site, findings
 
 

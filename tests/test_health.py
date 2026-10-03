@@ -273,7 +273,7 @@ def test_stats_count_pages_records_drops_requests_and_statuses() -> None:
             },
         },
         "null_ratio": {"product": {"price": 0.5, "sku": 0.0}},
-        "requests": {"ok": 1, "failed": {"HTTP 404": 1}},
+        "requests": {"ok": 1, "failed": {"HTTP 404": 1}, "missing": 0},
         "http_status": {"200": 2, "404": 1},
     }
 

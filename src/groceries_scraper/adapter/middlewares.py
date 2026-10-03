@@ -4,7 +4,7 @@ import base64
 import itertools
 import time
 from datetime import UTC, datetime
-from typing import Self
+from typing import Any, Self
 
 from scrapy import Request
 from scrapy.crawler import Crawler
@@ -31,6 +31,23 @@ def _headers(headers: Headers) -> dict[str, list[str]]:
     }
 
 
+def request_metadata(request: Request, ignore_params: frozenset[str]) -> dict[str, Any]:
+    """A page request's unredacted Capture metadata, before any response."""
+    return {
+        "page_type": request.meta[PAGE_TYPE],
+        "parent_capture_no": request.meta.get(PARENT_CAPTURE),
+        "variables": request.meta.get(VARIABLES, {}),
+        "request": {
+            "method": request.method,
+            "fingerprint": request_fingerprint(request, ignore_params),
+            "url": request.url,
+            "headers": _headers(request.headers),
+            "body": base64.b64encode(request.body).decode("ascii"),
+            "body_encoding": "base64",
+        },
+    }
+
+
 class CaptureMiddleware:
     def __init__(self, recorder: RunRecorder) -> None:
         self.recorder = recorder
@@ -52,24 +69,13 @@ class CaptureMiddleware:
         self.recorder.stats.add_response(response.status)
         started_at, started = request.meta[_STARTED]
         page_type = request.meta[PAGE_TYPE]
-        request_headers, response_headers = _headers(request.headers), _headers(response.headers)
         meta = {
             "capture_no": capture_no,
-            "page_type": page_type,
-            "parent_capture_no": request.meta.get(PARENT_CAPTURE),
-            "variables": request.meta.get(VARIABLES, {}),
-            "request": {
-                "method": request.method,
-                "fingerprint": request_fingerprint(request, self.recorder.ignore_params),
-                "url": request.url,
-                "headers": request_headers,
-                "body": base64.b64encode(request.body).decode("ascii"),
-                "body_encoding": "base64",
-            },
+            **request_metadata(request, self.recorder.ignore_params),
             "response": {
                 "url": response.url,
                 "status": response.status,
-                "headers": response_headers,
+                "headers": _headers(response.headers),
                 "timing": {
                     "started_at": started_at,
                     "finished_at": datetime.now(UTC).isoformat(),

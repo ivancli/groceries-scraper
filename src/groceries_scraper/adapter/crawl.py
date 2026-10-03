@@ -2,6 +2,7 @@ import time
 
 from scrapy.crawler import CrawlerProcess
 
+from groceries_scraper.adapter.replay import SourceRun
 from groceries_scraper.adapter.settings import RECORDER, scrapy_settings
 from groceries_scraper.adapter.spider import SiteSpider
 from groceries_scraper.config import Site
@@ -11,10 +12,13 @@ from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.summary import RunOutcome
 
 
-def crawl(site: Site, run: Run, limit: int | None = None) -> RunOutcome:
+def crawl(
+    site: Site, run: Run, limit: int | None = None, replay_of: SourceRun | None = None
+) -> RunOutcome:
     """Blocks until the crawl ends; Twisted allows one per process."""
-    settings = scrapy_settings(site, run, limit)
-    settings[RECORDER] = RunRecorder(run, site)
+    index = replay_of.index if replay_of is not None else None
+    settings = scrapy_settings(site, run, limit, index)
+    settings[RECORDER] = RunRecorder(run, site, replay_of.run if replay_of is not None else None)
     process = CrawlerProcess(settings)
     crawler = process.create_crawler(SiteSpider)
     process.crawl(crawler, site=site)

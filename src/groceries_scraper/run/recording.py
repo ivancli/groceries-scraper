@@ -25,7 +25,7 @@ class Capture:
 
 
 class RunRecorder:
-    def __init__(self, run: Run, site: Site) -> None:
+    def __init__(self, run: Run, site: Site, replay_of: Run | None = None) -> None:
         self.run = run
         self.stats = RunStats.for_site(site)
         self.level = site.settings.record_level
@@ -49,13 +49,21 @@ class RunRecorder:
             if "headers" in template:
                 template["headers"] = self.redact_headers(template["headers"])
         canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        self._manifest = {
+        self._manifest: dict[str, Any] = {
             "site": run.site,
             "run_id": run.run_id,
             "config": snapshot,
             "config_hash": hashlib.sha256(canonical.encode()).hexdigest(),
         }
+        if replay_of is not None:
+            self._manifest["replay_of"] = {"site": replay_of.site, "run_id": replay_of.run_id}
+            self._manifest["missing"] = []
         self._write_manifest()
+
+    def record_missing(self, metadata: dict[str, Any]) -> None:
+        """A Replay request no Capture matched; written to `run.json` when the Run finishes."""
+        self.stats.add_missing()
+        self._manifest["missing"].append(self.redact_metadata(metadata))
 
     def finish(self, outcome: RunOutcome) -> None:
         self._manifest.update(outcome.to_json())

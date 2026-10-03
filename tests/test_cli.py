@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -69,3 +70,22 @@ def test_run_rejects_an_unknown_record_level(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert "must be all, errors or off" in result.stderr
+
+
+def test_replay_rejects_a_directory_that_is_not_a_run(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["replay", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "not a Run directory" in result.output
+
+
+def test_replay_reports_a_source_config_that_no_longer_validates(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    (run_dir / "captures").mkdir(parents=True)
+    config = {"site": "s", "settings": {"record_level": "all"}, "unknown": 1}
+    (run_dir / "run.json").write_text(json.dumps({"site": "s", "run_id": "r", "config": config}))
+
+    result = CliRunner().invoke(app, ["replay", str(run_dir)])
+
+    assert result.exit_code == 1
+    assert f"invalid Site config {run_dir}" in result.output

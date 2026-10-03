@@ -24,6 +24,8 @@ class RunOutcome:
         requests = f"requests: ok {stats['requests']['ok']}"
         if failures := stats["requests"]["failed"]:
             requests += f", failed {sum(failures.values())} ({_counts(failures, ': ')})"
+        if missing := stats["requests"]["missing"]:
+            requests += f", missing {missing}"
         return "\n".join(
             [
                 f"records: {_counts(stats['records'])}",

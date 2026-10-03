@@ -18,7 +18,7 @@ class MetadataRedactor:
         self._paths = sensitive_paths
         self._headers = sensitive_headers
         self._secrets: set[str] = set()
-        for side in ("request", "response"):
+        for side in _sides(metadata):
             self._url_credentials(metadata[side]["url"])
             for name, values in metadata[side]["headers"].items():
                 if name.lower() in sensitive_headers:
@@ -159,7 +159,7 @@ class MetadataRedactor:
 
     def redact(self) -> dict[str, Any]:
         metadata = {**self.metadata, "variables": self._value(self.metadata["variables"], "")}
-        for side in ("request", "response"):
+        for side in _sides(self.metadata):
             exchange = self.metadata[side]
             headers = {
                 name: REDACTED
@@ -174,3 +174,8 @@ class MetadataRedactor:
             }
             metadata[side] = {**exchange, "url": self._url(exchange["url"]), "headers": headers}
         return metadata
+
+
+def _sides(metadata: dict[str, Any]) -> list[str]:
+    """Missing Replay requests have no response."""
+    return [side for side in ("request", "response") if side in metadata]

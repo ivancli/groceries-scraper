@@ -2,7 +2,8 @@ from pathlib import Path
 
 import yaml
 
-from groceries_scraper.adapter.settings import RECORD_LIMIT, scrapy_settings
+from groceries_scraper.adapter.replay import ReplayIndex
+from groceries_scraper.adapter.settings import RECORD_LIMIT, REPLAY, scrapy_settings
 from groceries_scraper.config import Site, parse_site
 from groceries_scraper.run import Run
 
@@ -52,3 +53,17 @@ def test_refresh_statuses_are_seen_before_retry_middleware() -> None:
 
     # Responses pass downloader middlewares from the highest order down; Retry is 550.
     assert middlewares["groceries_scraper.adapter.middlewares.RefreshStatusMiddleware"] > 550
+
+
+def test_replay_serves_captures_without_robots_txt_or_delays() -> None:
+    index = ReplayIndex([], frozenset())
+
+    settings = scrapy_settings(_site("{download_delay: 2.0}"), RUN, replay=index)
+
+    assert settings[REPLAY] is index
+    middlewares = settings["DOWNLOADER_MIDDLEWARES"]
+    replay = middlewares["groceries_scraper.adapter.replay.ReplayMiddleware"]
+    assert replay > middlewares["groceries_scraper.adapter.middlewares.CaptureMiddleware"]
+    assert settings["ROBOTSTXT_OBEY"] is False  # robots.txt is never captured
+    assert settings["DOWNLOAD_DELAY"] == 0
+    assert "ReplayMiddleware" not in str(scrapy_settings(_site(), RUN)["DOWNLOADER_MIDDLEWARES"])

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -432,7 +433,7 @@ def test_a_healthy_run_saves_stats_and_health_and_exits_0(
         "records": {"product": 5},
         "dropped": {"total": 0, "by_reason": {}},
         "null_ratio": {"product": {"name": 1 / 5, "price": 0.0, "sku": 0.0}},
-        "requests": {"ok": 8, "failed": {"HTTP 404": 1}},
+        "requests": {"ok": 8, "failed": {"HTTP 404": 1}, "missing": 0},
         "http_status": {"200": 8, "404": 1},
     }
     assert manifest["health"] == {"level": "ok", "breaches": []}
@@ -1018,3 +1019,149 @@ def test_custom_numeric_secret_copies_are_redacted_before_json_serialization(
     assert variables
     assert all(value == {"pin": "[REDACTED]", "copy": "[REDACTED]"} for value in variables)
     assert len(_records(run_dir)) == 6
+
+
+# Runs the CLI with IPv4/IPv6 connects logged and refused; local socketpairs still work.
+NO_NETWORK = """
+import errno, os, socket, sys
+
+def guard(original, refuse):
+    def connect(self, address):
+        if self.family not in (socket.AF_INET, socket.AF_INET6):
+            return original(self, address)
+        with open(os.environ["NETWORK_LOG"], "a") as log:
+            log.write(f"{address}\\n")
+        return refuse()
+    return connect
+
+def refuse():
+    raise ConnectionRefusedError(errno.ECONNREFUSED, "network access denied")
+
+socket.socket.connect = guard(socket.socket.connect, refuse)
+socket.socket.connect_ex = guard(socket.socket.connect_ex, lambda: errno.ECONNREFUSED)
+from groceries_scraper.cli import app
+sys.argv[0] = "scrape"
+app()
+"""
+
+
+def _offline(tmp_path: Path, *args: str, exit_code: int = 0) -> tuple[Path | None, str]:
+    """Runs `scrape <args>` offline; returns the new Run directory and the network log."""
+    before = set((tmp_path / "runs" / "e2e").iterdir())
+    log = tmp_path / "network.log"
+    log.unlink(missing_ok=True)
+    result = subprocess.run(
+        [sys.executable, "-c", NO_NETWORK, *args],
+        cwd=tmp_path,
+        env={**os.environ, "NETWORK_LOG": str(log)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == exit_code, result.stderr
+    new = set((tmp_path / "runs" / "e2e").iterdir()) - before
+    return (new.pop() if new else None), (log.read_text() if log.exists() else "")
+
+
+def _record_data(run_dir: Path) -> list[dict[str, Any]]:
+    """Crawl order, and so capture numbers, can differ between Runs."""
+    records = [
+        {key: value for key, value in record.items() if key != "_meta"}
+        for record in _records(run_dir)
+    ]
+    return sorted(records, key=lambda record: record["sku"])
+
+
+def test_replay_reproduces_records_from_captures_without_network_access(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf, shop.rotate_every = True, 2  # Session Setup, refreshes and 419 retries
+    source, _ = _run_with_log(tmp_path, shop, max_refresh=2)
+    served = list(shop.paths)
+
+    replay, network = _offline(tmp_path, "replay", str(source))
+
+    assert replay is not None and network == ""
+    assert shop.paths == served
+    assert _record_data(replay) == _record_data(source)
+    assert len(_records(replay)) == len(_skus())
+    assert sorted((c["page_type"], c["response"]["status"]) for c in _captures(replay)) == sorted(
+        (c["page_type"], c["response"]["status"]) for c in _captures(source)
+    )
+    manifest = _manifest(replay)
+    assert manifest["replay_of"] == {"site": "e2e", "run_id": source.name}
+    assert manifest["config"] == _manifest(source)["config"]
+    assert manifest["missing"] == []
+    assert manifest["health"]["level"] == "ok"
+    # The guard itself works: a live Run under it attempts a connection.
+    _, network = _offline(tmp_path, "run", "e2e.yaml", exit_code=2)
+    assert network != ""
+
+
+def test_replay_with_an_edited_selector_changes_records(tmp_path: Path, shop: _ShopServer) -> None:
+    source, _ = _run_with_log(tmp_path, shop)
+    edited = tmp_path / "edited.yaml"
+    edited.write_text((tmp_path / "e2e.yaml").read_text().replace("$.name", "$.title"))
+
+    replay, network = _offline(tmp_path, "replay", str(source), "--config", str(edited))
+
+    assert replay is not None and network == ""
+    assert {record["name"] for record in _records(source)} == {f"Product {s}" for s in _skus()}
+    assert [record["name"] for record in _records(replay)] == [None] * len(_skus())
+    assert _manifest(replay)["config"]["page_types"]["product"]["fields"]["name"] == {
+        "<pipe>": [{"jsonpath": "$.title"}],
+        "type": "string",
+    }
+
+
+def test_replay_records_requests_without_a_capture_as_missing(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    source, _ = _run_with_log(tmp_path, shop)
+    edited = tmp_path / "edited.yaml"
+    config = (tmp_path / "e2e.yaml").read_text()
+    edited.write_text(config.replace('json: {sku: "{{ sku }}"}', 'json: {sku: "{{ sku }}x"}'))
+
+    replay, network = _offline(
+        tmp_path, "replay", str(source), "--config", str(edited), exit_code=2
+    )
+
+    assert replay is not None and network == ""
+    manifest = _manifest(replay)
+    assert manifest["stats"]["requests"]["missing"] == len(_skus())
+    assert sorted(
+        json.loads(base64.b64decode(entry["request"]["body"]))["sku"]
+        for entry in manifest["missing"]
+    ) == sorted(f"{sku}x" for sku in _skus())
+    assert {entry["page_type"] for entry in manifest["missing"]} == {"product"}
+    assert _records(replay) == []
+
+
+@pytest.mark.parametrize("ignored", [True, False])
+def test_replay_matches_a_rotated_csrf_body_value_only_when_ignored(
+    tmp_path: Path, shop: _ShopServer, ignored: bool
+) -> None:
+    shop.csrf = True
+    _run_with_log(tmp_path, shop, max_refresh=1)  # writes the config; this Run is discarded
+    for run_dir in (tmp_path / "runs" / "e2e").iterdir():
+        shutil.rmtree(run_dir)
+    config = yaml.safe_load((tmp_path / "e2e.yaml").read_text())
+    config["page_types"]["listing"]["follow"][0]["request"]["json"]["csrf"] = "{{ session.csrf }}"
+    if ignored:
+        config["replay"] = {"ignore_params": ["csrf"]}
+    (tmp_path / "e2e.yaml").write_text(yaml.safe_dump(config))
+    source, _ = _crawl_config(tmp_path)
+    [setup_body] = (source / "captures").glob("*-session_setup.body")
+    setup_body.write_bytes(
+        re.sub(rb'content="[0-9a-f]+"', b'content="rotated"', setup_body.read_bytes())
+    )
+
+    replay, _ = _offline(tmp_path, "replay", str(source), exit_code=0 if ignored else 2)
+
+    assert replay is not None
+    products = [c for c in _captures(replay) if c["page_type"] == "product"]
+    assert {c["variables"]["session"]["csrf"] for c in products} == (
+        {"rotated"} if ignored else set()
+    )
+    assert len(_records(replay)) == (len(_skus()) if ignored else 0)
+    assert _manifest(replay)["stats"]["requests"]["missing"] == (0 if ignored else len(_skus()))
