@@ -6,8 +6,9 @@ from dataclasses import asdict, replace
 from typing import Any, NoReturn
 
 import scrapy
-from scrapy.exceptions import CloseSpider
+from scrapy.exceptions import CloseSpider, IgnoreRequest
 from scrapy.http import Response
+from scrapy.spidermiddlewares.httperror import HttpError
 from twisted.python.failure import Failure
 
 from groceries_scraper.adapter.middlewares import (
@@ -18,7 +19,7 @@ from groceries_scraper.adapter.middlewares import (
     VARIABLES,
 )
 from groceries_scraper.adapter.pipelines import EmittedRecord
-from groceries_scraper.adapter.settings import RECORDER, STATS
+from groceries_scraper.adapter.settings import RECORDER
 from groceries_scraper.config import Site
 from groceries_scraper.config.models import Session
 from groceries_scraper.engine.follow import FollowRequest
@@ -26,11 +27,9 @@ from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
 from groceries_scraper.engine.request import RenderedRequest, RequestSource
 from groceries_scraper.engine.session import RefreshAction, SessionRefresh, evaluate_setup
+from groceries_scraper.run.health import SESSION_SETUP_FAILED
 from groceries_scraper.run.recording import Capture, RunRecorder
 from groceries_scraper.run.stats import RunStats
-
-# Close reason and Scrapy stats key.
-SESSION_SETUP_FAILED = "session_setup_failed"
 
 _ERROR_STATUSES = list(range(400, 600))
 
@@ -89,6 +88,7 @@ class SiteSpider(scrapy.Spider):
         return _scrapy_request(
             follow.request,
             callback=self._on_response,
+            errback=self._on_error,
             cb_kwargs={"follow": follow, "generation": self._refresh.generation},
             meta={
                 "handle_httpstatus_list": refresh_on,
@@ -109,6 +109,7 @@ class SiteSpider(scrapy.Spider):
             return
         capture: Capture = response.meta[CAPTURE]
         capture_no = capture.capture_no
+        self._stats.add_request_ok()
         self._stats.add_page(follow.page_type)
         try:
             result = evaluate_response(
@@ -139,6 +140,7 @@ class SiteSpider(scrapy.Spider):
         for dropped in result.extraction.dropped:
             self._stats.add_dropped(dropped)
         for record in result.extraction.records:
+            self._stats.add_extracted()
             yield EmittedRecord(record, response.url, capture_no)
         for request in result.follow.requests:
             yield self._request(request)
@@ -166,6 +168,19 @@ class SiteSpider(scrapy.Spider):
                 self._refresh.max_refresh,
             )
             self._inc_stat("session/refresh_exhausted")
+            self._stats.add_request_failed(f"HTTP {response.status}")
+
+    def _on_error(self, failure: Failure) -> None:
+        """A page request's final failure, after Scrapy's retries."""
+        request = failure.request  # type: ignore[attr-defined]  # set by Scrapy for errbacks
+        error = failure.value
+        if isinstance(error, HttpError):
+            status = error.response.status
+            self.logger.info("HTTP %d from %s: not handled", status, request.url)
+            self._stats.add_request_failed(f"HTTP {status}")
+        elif not isinstance(error, IgnoreRequest):  # e.g. robots.txt: never sent
+            self.logger.error("Request to %s failed: %s", request.url, failure.getErrorMessage())
+            self._stats.add_request_failed(type(error).__name__)
 
     # --- Session Setup -------------------------------------------------------
 
@@ -227,8 +242,6 @@ class SiteSpider(scrapy.Spider):
 
     def _setup_failed(self, index: int, error: str) -> NoReturn:
         self.logger.error("Session Setup step %d failed: %s", index, error)
-        self._inc_stat(SESSION_SETUP_FAILED)
-        self._stats.session_setup_failed = True
         raise CloseSpider(SESSION_SETUP_FAILED)
 
     def _inc_stat(self, key: str) -> None:
@@ -242,5 +255,4 @@ class SiteSpider(scrapy.Spider):
 
     @property
     def _stats(self) -> RunStats:
-        stats: RunStats = self.crawler.settings[STATS]
-        return stats
+        return self._recorder.stats

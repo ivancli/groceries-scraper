@@ -5,7 +5,6 @@ import typer
 
 from groceries_scraper.config import ConfigError, Site, load_checked_site
 from groceries_scraper.run import create_run
-from groceries_scraper.run.summary import format_summary
 
 RUNS_DIR = Path("runs")
 
@@ -60,9 +59,9 @@ def run(
         )
     new_run = create_run(RUNS_DIR, site.site)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    stats, health = crawl(site, new_run, limit)
-    typer.echo(f"Run {new_run.run_id}\n{format_summary(stats, health)}")
-    raise typer.Exit(code=health.exit_code)
+    outcome = crawl(site, new_run, limit)
+    typer.echo(outcome.summary())
+    raise typer.Exit(code=outcome.health.exit_code)
 
 
 @app.command()

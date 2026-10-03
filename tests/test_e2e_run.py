@@ -401,8 +401,11 @@ def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer)
     run_dir, log = _run_with_log(tmp_path, shop, max_refresh=1, exit_code=2)
 
     assert _manifest(run_dir)["health"] == {
-        "status": "failed",
-        "breaches": ["Session Setup failed", "no Records of Record Type `product`"],
+        "level": "failed",
+        "breaches": [
+            {"check": "finish_reason", "detail": "Session Setup failed"},
+            {"check": "records.product", "detail": "no Records"},
+        ],
     }
     assert "/c/dairy" not in shop.paths
     assert "Session Setup step 0 failed: Session Setup request got HTTP 503" in log
@@ -428,10 +431,11 @@ def test_a_healthy_run_saves_stats_and_health_and_exits_0(
         "pages": {"listing": 3, "product": 5},  # HTTP errors never reach a Page Type
         "records": {"product": 5},
         "dropped": {"total": 0, "by_reason": {}},
-        "null_ratio": {"name": 1 / 5, "price": 0.0, "sku": 0.0},
+        "null_ratio": {"product": {"name": 1 / 5, "price": 0.0, "sku": 0.0}},
+        "requests": {"ok": 8, "failed": {"HTTP 404": 1}},
         "http_status": {"200": 8, "404": 1},
     }
-    assert manifest["health"] == {"status": "ok", "breaches": []}
+    assert manifest["health"] == {"level": "ok", "breaches": []}
     assert "records: product 5" in log
     assert "health: ok" in log
 
@@ -445,11 +449,22 @@ def test_a_health_check_breach_degrades_the_run_and_exits_1(
         tmp_path, shop, health="health: {max_null_ratio: {name: 0.1}}", exit_code=1
     )
 
+    breach = "max_null_ratio.name: 0.167 > 0.100 in `product`"
     assert _manifest(run_dir)["health"] == {
-        "status": "degraded",
-        "breaches": ["max_null_ratio.name: 0.167 > 0.100"],
+        "level": "degraded",
+        "breaches": [{"check": "max_null_ratio.name", "detail": breach.split(": ", 1)[1]}],
     }
-    assert "health: degraded\n  max_null_ratio.name: 0.167 > 0.100" in log
+    assert f"health: degraded\n  {breach}" in log
+
+
+def test_a_run_cut_short_by_the_limit_skips_record_count_checks(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    run_dir = _run_with_log(
+        tmp_path, shop, "--limit", "1", health="health: {min_records: {product: 6}}"
+    )[0]
+
+    assert _manifest(run_dir)["health"] == {"level": "ok", "breaches": []}
 
 
 def _captures(run_dir: Path) -> list[dict[str, Any]]:
