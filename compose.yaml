@@ -1,0 +1,15 @@
+# Disposable Postgres for the Sink tests:
+#   docker compose up -d --wait
+#   TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres uv run pytest
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: test
+    ports: ["55432:5432"]  # off 5432, so a local Postgres doesn't clash
+    tmpfs: [/var/lib/postgresql/data]  # tests drop their tables; nothing worth keeping
+    healthcheck:
+      test: pg_isready -U postgres
+      interval: 2s
+      timeout: 5s
+      retries: 15
