@@ -1,6 +1,8 @@
 """Request identity for Replay, computed before Capture metadata is redacted."""
 
+import codecs
 import json
+from email.message import Message
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from scrapy import Request
@@ -24,9 +26,13 @@ def request_fingerprint(request: Request, ignore_params: frozenset[str]) -> str:
 
 
 def _body(request: Request, ignored: frozenset[str]) -> bytes:
-    content_type = (request.headers.get("Content-Type", b"") or b"").split(b";", 1)[0].lower()
+    content_type = Message()
+    content_type["Content-Type"] = (request.headers.get("Content-Type", b"") or b"").decode(
+        "latin-1"
+    )
+    mime_type = content_type.get_content_type()
     body = request.body
-    if content_type == b"application/json" or content_type.endswith(b"+json"):
+    if mime_type == "application/json" or mime_type.endswith("+json"):
         try:
             value = json.loads(body)
         except ValueError:
@@ -36,10 +42,17 @@ def _body(request: Request, ignored: frozenset[str]) -> bytes:
             return json.dumps(
                 filtered, sort_keys=True, separators=(",", ":"), ensure_ascii=False
             ).encode("utf-8")
-    elif content_type == b"application/x-www-form-urlencoded":
+    elif mime_type == "application/x-www-form-urlencoded":
         try:
-            pairs = parse_qsl(body.decode("utf-8"), keep_blank_values=True)
-        except UnicodeError:
+            charset = content_type.get_content_charset() or "utf-8"
+            codecs.lookup(charset)
+            pairs = parse_qsl(
+                body.decode("ascii"),
+                keep_blank_values=True,
+                encoding=charset,
+                errors="strict",
+            )
+        except (LookupError, UnicodeError):
             return body
         return urlencode(
             sorted((name, value) for name, value in pairs if name not in ignored)
