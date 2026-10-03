@@ -141,10 +141,13 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - Only Page Types opt in: Session Setup, robots.txt and other Page Types stay plain HTTP, and
   a Site without browser Page Types never starts a browser.
 - The browser sends the request's method, headers (including Session cookies) and body for the
-  page itself; its subresources use the browser's own headers. Redirects happen inside the
-  browser, so the Capture is the final page.
-- Its Capture has `render: browser`; the `.body` is the rendered DOM (no `Content-Encoding`), not
-  the server's bytes. Replay serves it like any Capture, without a browser.
+  page itself. Its subresources and script fetches use the browser's own headers and cookie
+  store, so they lack Session cookies and headers, and skip robots.txt, download delay and
+  Captures. Redirects happen inside the browser, so the Capture is the final page.
+- Navigation timeouts are retried like HTTP download timeouts.
+- Its Capture has `render: browser`; request headers are those the browser sent, and the
+  `.body` is the rendered DOM (no `Content-Encoding`), not the server's bytes. Replay serves
+  it like any Capture, without a browser.
 - Setup: `uv run playwright install chromium` (CI installs it too).
 
 ### Session (v1)

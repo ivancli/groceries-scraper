@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING, Any
 
+from scrapy.settings import default_settings
+
 from groceries_scraper.config import Site
 from groceries_scraper.run import Run
 
@@ -36,11 +38,16 @@ def scrapy_settings(
     if limit is not None:
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
     # Replay serves rendered Captures, so it never needs a browser.
-    if replay is None and any(page.render == "browser" for page in site.page_types.values()):
+    if replay is None and any(page.renders_in_browser for page in site.page_types.values()):
         # Requests without the browser meta key still go through Scrapy's HTTP handler.
         handler = "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler"
         settings["DOWNLOAD_HANDLERS"] = {"http": handler, "https": handler}
         settings["TWISTED_REACTOR"] = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+        # Retried like an HTTP download timeout.
+        settings["RETRY_EXCEPTIONS"] = [
+            *default_settings.RETRY_EXCEPTIONS,
+            "playwright.async_api.TimeoutError",
+        ]
     if replay is not None:
         settings[REPLAY] = replay
         # After CaptureMiddleware's process_request, so served Captures are timed and recorded.

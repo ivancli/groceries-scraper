@@ -103,7 +103,7 @@ class SiteSpider(scrapy.Spider):
         )
 
     def _render_meta(self, page_type: str) -> dict[str, Any]:
-        if self.site.page_types[page_type].render != "browser":
+        if not self.site.page_types[page_type].renders_in_browser:
             return {}
         # Network idle: scripts that fetch content after `load` have finished rendering it.
         return {BROWSER: True, "playwright_page_goto_kwargs": {"wait_until": "networkidle"}}
