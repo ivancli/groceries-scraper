@@ -265,7 +265,8 @@ runs/<site>/<run_id>/
 - Inside a Kubernetes Job, `run.json` also records `job`: the Job's name, from the
   `SCRAPE_JOB_NAME` environment variable (set through the Downward API), so a Run
   directory or Archive traces back to the Job and its logs. Without the variable there is
-  no `job` key; readers treat it as optional.
+  no `job` key; readers treat it as optional. A Replay records its own Job, not its
+  source Run's.
 - Capture numbers are assigned in response order, including Session Setup, redirects and
   retries. `parent_capture_no` links Follow Requests and successive HTTP attempts. Scrapy's
   internal robots.txt request has no Page Type and is excluded. `errors` mode can leave gaps
