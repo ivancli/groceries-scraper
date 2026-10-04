@@ -400,7 +400,8 @@ only `run.json` and Records. `run.json` is uploaded last as the completion marke
 
 Order: an Archive URL overlapping an S3 `--sink` (same bucket, one prefix containing the
 other) is refused (exit 1); the Sinks and the Archive are checked (an unusable Archive exits
-4); the crawl; the Archive, which prints its URL; the Sinks. The Archive goes first so a Run
+4); the crawl; the Archive, which prints its URL; the Sinks. The check writes an empty
+`<prefix>/.write-check`, so a read-only bucket fails before the crawl. The Archive goes first so a Run
 stopped by SIGTERM is archived within the shutdown grace period. Credentials come from the
 standard AWS environment, as for the S3 Sink. The bucket holds raw responses: keep it
 private and encrypted.

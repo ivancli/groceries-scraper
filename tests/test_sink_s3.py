@@ -1,10 +1,9 @@
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import boto3
 import pytest
-from moto import mock_aws
+from sink_runs import s3_objects as _objects
 from sink_runs import saved_run as _run
 from typer.testing import CliRunner
 
@@ -13,28 +12,6 @@ from groceries_scraper.run.directory import SavedRun
 from groceries_scraper.run.sinks import SinkError, export_run, open_sink
 
 PREFIX = "scrapes/shop/default/20260101T000000Z-abc123"  # no Location: `default`
-
-
-@pytest.fixture
-def s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    for name, value in {
-        "AWS_ACCESS_KEY_ID": "testing",
-        "AWS_SECRET_ACCESS_KEY": "testing",
-        "AWS_DEFAULT_REGION": "us-east-1",
-    }.items():
-        monkeypatch.setenv(name, value)
-    with mock_aws():
-        client = boto3.client("s3")
-        client.create_bucket(Bucket="bucket")
-        yield client
-
-
-def _objects(s3: Any) -> dict[str, bytes]:
-    listing = s3.list_objects_v2(Bucket="bucket").get("Contents", [])
-    return {
-        entry["Key"]: s3.get_object(Bucket="bucket", Key=entry["Key"])["Body"].read()
-        for entry in listing
-    }
 
 
 def test_a_run_manifest_and_record_files_are_mirrored_under_prefix_site_location_and_run_id(
