@@ -1,9 +1,9 @@
 """One generic spider: every response goes through the engine; Follow Requests go back out."""
 
 import os
-from collections.abc import AsyncIterator, Iterator
-from dataclasses import asdict, replace
-from typing import Any, NoReturn
+from collections.abc import AsyncIterator, Iterator, Mapping
+from dataclasses import asdict, dataclass, field, replace
+from typing import Any
 
 import scrapy
 from scrapy.exceptions import CloseSpider, IgnoreRequest
@@ -17,6 +17,7 @@ from groceries_scraper.adapter.middlewares import (
     PAGE_TYPE,
     PARENT_CAPTURE,
     REFRESH_ON,
+    SESSION_NO,
     VARIABLES,
 )
 from groceries_scraper.adapter.pipelines import EmittedRecord
@@ -51,50 +52,79 @@ def _scrapy_request(rendered: RenderedRequest, **kwargs: Any) -> scrapy.Request:
     )
 
 
+@dataclass(eq=False)
+class _Session:
+    """One Session of the pool: its cookie jar, Session Variables and refresh budget."""
+
+    number: int  # 1-based; also names its cookie jar
+    refresh: SessionRefresh
+    ready: bool  # its first Session Setup has ended
+    variables: dict[str, Any] = field(default_factory=dict)
+    lost: bool = False
+    # Held until its Session Setup ends: Start Requests once, then retries after each refresh.
+    starts: list[FollowRequest] = field(default_factory=list)
+    retries: list[FollowRequest] = field(default_factory=list)
+
+
 class SiteSpider(scrapy.Spider):
     name = "site"  # replaced by the Site's name
 
-    def __init__(self, site: Site, **kwargs: Any) -> None:
+    def __init__(
+        self, site: Site, location: Mapping[str, Any] | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(name=site.site, **kwargs)
         self.site = site
         self.env = dict(os.environ)
+        self._location = location or {}
         # No Session: no Setup steps, and a refresh policy that never triggers.
         session = site.session or Session(setup=[])
         self._setup_steps = session.setup
-        self._refresh = SessionRefresh(session.refresh_on, session.max_refresh)
-        self._session: dict[str, Any] = {}
+        self._sessions = [
+            _Session(
+                number,
+                SessionRefresh(session.refresh_on, session.max_refresh),
+                ready=not session.setup,
+            )
+            for number in range(1, session.pool + 1)
+        ]
         self._keys = RecordKeys(site.records)
-        # Held until Session Setup ends: Start Requests once, then retries after each refresh.
-        self._starts: list[FollowRequest] = []
-        self._retries: list[FollowRequest] = []
 
     async def start(self) -> AsyncIterator[scrapy.Request]:
-        starts = [
-            FollowRequest(RenderedRequest("GET", start.url), start.page_type, {}, None)
-            for start in self.site.start
-        ]
-        if self._setup_steps:
-            self._starts = starts
-            yield self._setup(0, {})
-            return
-        for follow in starts:
-            yield self._request(follow)
+        # Round-robin in config order, so Replay assigns Sessions identically.
+        for i, start in enumerate(self.site.start):
+            follow = FollowRequest(RenderedRequest("GET", start.url), start.page_type, {}, None)
+            session = self._sessions[i % len(self._sessions)]
+            if session.ready:
+                yield self._request(follow, session)
+            else:
+                session.starts.append(follow)
+        for session in self._sessions:
+            if not session.ready:
+                for request in self._setup(session, 0, {}):
+                    yield request
 
-    def _request(self, follow: FollowRequest, retry: bool = False) -> scrapy.Request:
-        refresh_on = sorted(self._refresh.refresh_on)
+    def _request(
+        self, follow: FollowRequest, session: _Session, retry: bool = False
+    ) -> scrapy.Request:
+        refresh_on = sorted(session.refresh.refresh_on)
         source = follow.source
         variables = {
             **follow.variables,
             **(dict(source.bindings) if source is not None else {}),
-            "session": dict(source.ctx.session if source is not None else self._session),
+            "session": dict(source.ctx.session if source is not None else session.variables),
         }
         return _scrapy_request(
             follow.request,
             callback=self._on_response,
             errback=self._on_error,
-            cb_kwargs={"follow": follow, "generation": self._refresh.generation},
+            cb_kwargs={
+                "follow": follow,
+                "session": session,
+                "generation": session.refresh.generation,
+            },
             meta={
                 "handle_httpstatus_list": refresh_on,
+                "cookiejar": session.number,
                 REFRESH_ON: refresh_on,
                 PAGE_TYPE: follow.page_type,
                 VARIABLES: variables,
@@ -111,11 +141,11 @@ class SiteSpider(scrapy.Spider):
         return {BROWSER: True, "playwright_page_goto_kwargs": {"wait_until": "networkidle"}}
 
     def _on_response(
-        self, response: Response, follow: FollowRequest, generation: int
+        self, response: Response, follow: FollowRequest, session: _Session, generation: int
     ) -> Iterator[EmittedRecord | scrapy.Request]:
-        action = self._refresh.on_status(response.status, generation)
+        action = session.refresh.on_status(response.status, generation)
         if action is not RefreshAction.PROCEED:
-            yield from self._on_refresh_status(action, response, follow)
+            yield from self._on_refresh_status(action, response, follow, session)
             return
         capture: Capture = response.meta[CAPTURE]
         capture_no = capture.capture_no
@@ -128,7 +158,8 @@ class SiteSpider(scrapy.Spider):
                 _content_type(response),
                 PipeContext(
                     variables=follow.variables,
-                    session=self._session,
+                    session=session.variables,
+                    location=self._location,
                     env=self.env,
                     url=response.url,
                 ),
@@ -154,10 +185,10 @@ class SiteSpider(scrapy.Spider):
             self._stats.add_extracted()
             yield EmittedRecord(record, response.url, capture_no)
         for request in result.follow.requests:
-            yield self._request(request)
+            yield self._request(request, session)
 
     def _on_refresh_status(
-        self, action: RefreshAction, response: Response, follow: FollowRequest
+        self, action: RefreshAction, response: Response, follow: FollowRequest, session: _Session
     ) -> Iterator[scrapy.Request]:
         url = follow.request.url
         capture: Capture = response.meta[CAPTURE]
@@ -165,21 +196,22 @@ class SiteSpider(scrapy.Spider):
         if action is RefreshAction.REFRESH:
             self.logger.info("HTTP %d from %s: refreshing the Session", response.status, url)
             self._inc_stat("session/refreshes")
-            self._retries.append(follow)
-            yield self._setup(0, {}, parent=capture.capture_no)
+            session.retries.append(follow)
+            yield from self._setup(session, 0, {}, parent=capture.capture_no)
         elif action is RefreshAction.WAIT:
-            self._retries.append(follow)
+            session.retries.append(follow)
         elif action is RefreshAction.RETRY:
-            yield self._request(follow.with_session(self._session), retry=True)
+            yield self._request(follow.with_session(session.variables), session, retry=True)
         else:
             self.logger.error(
                 "HTTP %d from %s: max_refresh (%d) reached; dropping the request",
                 response.status,
                 url,
-                self._refresh.max_refresh,
+                session.refresh.max_refresh,
             )
             self._inc_stat("session/refresh_exhausted")
             self._stats.add_request_failed(f"HTTP {response.status}")
+            yield from self._lose(session, "max_refresh reached")
 
     def _on_error(self, failure: Failure) -> None:
         """A page request's final failure, after Scrapy's retries."""
@@ -196,64 +228,99 @@ class SiteSpider(scrapy.Spider):
     # --- Session Setup -------------------------------------------------------
 
     def _setup(
-        self, index: int, session: dict[str, Any], parent: int | None = None
-    ) -> scrapy.Request:
+        self,
+        session: _Session,
+        index: int,
+        variables: dict[str, Any],
+        parent: int | None = None,
+    ) -> Iterator[scrapy.Request]:
         # Each step sees only the Session Variables extracted before it.
-        ctx = PipeContext(session=session, env=self.env)
+        ctx = PipeContext(session=variables, location=self._location, env=self.env)
         try:
             rendered = RequestSource(self._setup_steps[index].request, None, ctx).render()
         except Exception as exc:
-            self._setup_failed(index, f"{type(exc).__name__}: {exc}")
-        return _scrapy_request(
+            yield from self._setup_failed(session, index, f"{type(exc).__name__}: {exc}")
+            return
+        meta = {
+            "handle_httpstatus_list": _ERROR_STATUSES,  # 3xx still redirect
+            "cookiejar": session.number,
+            PAGE_TYPE: "session_setup",
+            PARENT_CAPTURE: parent,
+            VARIABLES: {"session": dict(variables)},
+        }
+        if len(self._sessions) > 1:
+            meta[SESSION_NO] = session.number
+        yield _scrapy_request(
             rendered,
             callback=self._on_setup,
             errback=self._on_setup_error,
-            cb_kwargs={"index": index, "session": session},
-            meta={
-                "handle_httpstatus_list": _ERROR_STATUSES,  # 3xx still redirect
-                PAGE_TYPE: "session_setup",
-                PARENT_CAPTURE: parent,
-                VARIABLES: {"session": dict(session)},
-            },
-            dont_filter=True,  # Setup re-runs on every refresh
+            cb_kwargs={"session": session, "index": index, "variables": variables},
+            meta=meta,
+            dont_filter=True,  # Setup re-runs on every refresh, and once per Session
         )
 
     def _on_setup(
-        self, response: Response, index: int, session: dict[str, Any]
+        self, response: Response, session: _Session, index: int, variables: dict[str, Any]
     ) -> Iterator[scrapy.Request]:
         result = evaluate_setup(
             self._setup_steps[index],
             response.status,
             response.body,
             _content_type(response),
-            PipeContext(session=session, env=self.env, url=response.url),
+            PipeContext(session=variables, location=self._location, env=self.env, url=response.url),
         )
         capture: Capture = response.meta[CAPTURE]
         self._recorder.record(
             capture, {"fields": [asdict(entry) for entry in result.trace], "error": result.error}
         )
         if result.error is not None:
-            self._setup_failed(index, result.error)
-        session = {**session, **result.session}
-        if index + 1 < len(self._setup_steps):
-            yield self._setup(index + 1, session, parent=capture.capture_no)
+            yield from self._setup_failed(session, index, result.error)
             return
-        self._session = session
-        self._refresh.refreshed()
-        starts, self._starts = self._starts, []
-        retries, self._retries = self._retries, []
+        variables = {**variables, **result.session}
+        if index + 1 < len(self._setup_steps):
+            yield from self._setup(session, index + 1, variables, parent=capture.capture_no)
+            return
+        session.variables = variables
+        session.refresh.refreshed()
+        session.ready = True
+        starts, session.starts = session.starts, []
+        retries, session.retries = session.retries, []
         for follow in starts:
-            yield self._request(follow)
+            yield self._request(follow, session)
         for follow in retries:
-            yield self._request(follow.with_session(session), retry=True)
+            yield self._request(follow.with_session(variables), session, retry=True)
 
-    def _on_setup_error(self, failure: Failure) -> None:
+    def _on_setup_error(self, failure: Failure) -> list[scrapy.Request]:
         request = failure.request  # type: ignore[attr-defined]  # set by Scrapy for errbacks
-        self._setup_failed(request.cb_kwargs["index"], failure.getErrorMessage())
+        session, index = request.cb_kwargs["session"], request.cb_kwargs["index"]
+        return list(self._setup_failed(session, index, failure.getErrorMessage()))
 
-    def _setup_failed(self, index: int, error: str) -> NoReturn:
+    def _setup_failed(self, session: _Session, index: int, error: str) -> Iterator[scrapy.Request]:
         self.logger.error("Session Setup step %d failed: %s", index, error)
-        raise CloseSpider(SESSION_SETUP_FAILED)
+        yield from self._lose(session, "Session Setup failed")
+
+    def _lose(self, session: _Session, reason: str) -> Iterator[scrapy.Request]:
+        """Hands its unstarted Start Requests to the remaining Sessions; none left ends the Run."""
+        if session.lost:
+            return
+        session.lost = True
+        self.logger.error("Session %d lost: %s", session.number, reason)
+        self._inc_stat("session/lost")
+        self._stats.add_session_lost()
+        # Follow-on requests keep their Session, so its pending retries go with it.
+        for _ in session.retries:
+            self._stats.add_request_failed("Session lost")
+        session.retries = []
+        remaining = [other for other in self._sessions if not other.lost]
+        if not remaining:
+            raise CloseSpider(SESSION_SETUP_FAILED)
+        starts, session.starts = session.starts, []
+        for i, follow in enumerate(starts):
+            heir = remaining[i % len(remaining)]
+            if heir.ready:
+                yield self._request(follow, heir)
+            else:
+                heir.starts.append(follow)
 
     def _inc_stat(self, key: str) -> None:
         assert self.crawler.stats is not None

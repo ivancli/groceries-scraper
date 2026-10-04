@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from groceries_scraper.config.models import RecordType
+from groceries_scraper.config.models import DEFAULT_LOCATION, RecordType
 from groceries_scraper.run.health import HealthLevel
 from groceries_scraper.run.keys import RecordKey
 
@@ -18,15 +18,18 @@ class Run:
     site: str
     run_id: str
     path: Path
+    location: str = DEFAULT_LOCATION
 
 
-def create_run(root: Path, site: str, now: datetime | None = None) -> Run:
+def create_run(
+    root: Path, site: str, now: datetime | None = None, *, location: str = DEFAULT_LOCATION
+) -> Run:
     """Run ids sort by start time; the random suffix keeps same-second Runs apart."""
     started = (now or datetime.now(UTC)).astimezone(UTC)
     run_id = f"{started:%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
     path = root / site / run_id
     path.mkdir(parents=True)
-    return Run(site, run_id, path)
+    return Run(site, run_id, path, location)
 
 
 def read_manifest(path: Path) -> dict[str, Any]:
@@ -52,6 +55,12 @@ class SavedRun:
     run_id: str
     manifest: dict[str, Any]
     keys: dict[str, RecordKey]
+
+    @property
+    def location(self) -> str:
+        """Runs from before Locations scraped the implicit one."""
+        location: str = self.manifest.get("location", DEFAULT_LOCATION)
+        return location
 
     @classmethod
     def load(cls, path: Path) -> "SavedRun":

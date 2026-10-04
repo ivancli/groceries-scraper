@@ -33,6 +33,11 @@ class RunOutcome:
                 dropped,
                 requests,
                 f"http: {_counts(stats['http_status'], ': ')}",
+                *(
+                    [f"sessions: {self.stats.sessions_lost} of {self.stats.sessions} lost"]
+                    if self.stats.sessions_lost
+                    else []
+                ),
                 f"duration: {self.stats.duration_seconds:.1f}s",
                 f"health: {self.health.level}",
                 *(f"  {breach}" for breach in self.health.breaches),

@@ -21,6 +21,7 @@ PAGE_TYPE = "groceries_page_type"
 VARIABLES = "groceries_variables"
 PARENT_CAPTURE = "groceries_parent_capture"
 CAPTURE = "groceries_capture"
+SESSION_NO = "groceries_session_no"  # Session Setup requests, when the pool has several
 # scrapy-playwright's own key: its download handler renders requests carrying it.
 BROWSER = "playwright"
 _STARTED = "groceries_capture_started"
@@ -39,6 +40,7 @@ def request_metadata(request: Request, ignore_params: frozenset[str]) -> dict[st
         "page_type": request.meta[PAGE_TYPE],
         **({"render": "browser"} if request.meta.get(BROWSER) else {}),
         "parent_capture_no": request.meta.get(PARENT_CAPTURE),
+        **({"session_no": request.meta[SESSION_NO]} if SESSION_NO in request.meta else {}),
         "variables": request.meta.get(VARIABLES, {}),
         "request": {
             "method": request.method,

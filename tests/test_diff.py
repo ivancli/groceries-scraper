@@ -19,6 +19,7 @@ def _run(
     site: str = "shop",
     record_types: dict[str, Any] = KEYED,
     finish_reason: str = "finished",
+    location: str | None = None,  # None: a Run from before Locations
 ) -> Path:
     path = root / site / run_id
     (path / "records").mkdir(parents=True)
@@ -28,6 +29,8 @@ def _run(
         "config": {"site": site, "records": record_types},
         "stats": {"finish_reason": finish_reason},
     }
+    if location is not None:
+        manifest["location"] = location
     (path / "run.json").write_text(json.dumps(manifest))
     for record_type, rows in records.items():
         lines = [json.dumps({**row, "_meta": {"run_id": run_id}}) for row in rows]
@@ -147,6 +150,23 @@ def test_runs_of_different_sites_cannot_be_compared(tmp_path: Path) -> None:
 
     with pytest.raises(DiffError, match="different Sites: one and two"):
         diff_runs(old, new)
+
+
+def test_runs_of_different_locations_cannot_be_compared(tmp_path: Path) -> None:
+    old = _run(tmp_path, "1", {}, location="melb")
+    new = _run(tmp_path, "2", {}, location="syd")
+
+    with pytest.raises(DiffError, match="different Locations: melb and syd"):
+        diff_runs(old, new)
+
+
+def test_a_run_from_before_locations_is_of_the_default_location(tmp_path: Path) -> None:
+    old = _run(tmp_path, "1", {"product": [{"sku": "a"}]})
+    new = _run(tmp_path, "2", {"product": [{"sku": "a"}]}, location="default")
+
+    assert diff_runs(old, new).record_types[0].unchanged == 1
+    with pytest.raises(DiffError, match="different Locations: default and melb"):
+        diff_runs(old, _run(tmp_path, "3", {}, location="melb"))
 
 
 def test_a_record_key_changed_between_runs_cannot_be_compared(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -81,6 +81,7 @@ class _Shop(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         url = urlsplit(self.path)
         self.server.paths.append(self.path)
+        self.server.sids.append((self.path, self._sid()))
         if url.path == "/robots.txt":
             self._send("text/plain", self.server.robots)
         elif url.path == "/" and self.server.home_redirects:
@@ -92,20 +93,24 @@ class _Shop(BaseHTTPRequestHandler):
             self._home()
         elif url.path == "/c/dairy" and self.server.render_js:
             self._send("text/html; charset=utf-8", JS_LISTING)
-        elif url.path in ("/c/dairy", "/api/tiles"):
+        elif url.path.startswith("/c/") or url.path == "/api/tiles":
             page = int(parse_qs(url.query).get("page", ["1"])[0])
-            self._send("text/html; charset=utf-8", _listing(page, self.server.wrap_pagination))
+            category = url.path.removeprefix("/c/") if url.path.startswith("/c/") else "dairy"
+            listing = _listing(page, self.server.wrap_pagination, category)
+            self._send("text/html; charset=utf-8", listing)
         else:
             self.send_error(404)
 
     def do_POST(self) -> None:
         self.server.paths.append(self.path)
+        self.server.sids.append((self.path, self._sid()))
         self.server.authorizations.append(self.headers.get("Authorization", ""))
         data = self.rfile.read(int(self.headers["Content-Length"]))
         if self.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
             body = {key: values[0] for key, values in parse_qs(data.decode()).items()}
         else:
             body = json.loads(data)
+        self.server.bodies.append(body)
         if self.server.csrf and not self._valid_token():
             self._send("text/plain", "token mismatch", status=419)
             return
@@ -124,7 +129,7 @@ class _Shop(BaseHTTPRequestHandler):
             return
         if self.server.home_failures:
             self.server.home_failures -= 1
-            self.send_error(503)
+            self.send_error(self.server.home_failure_status)
             return
         if self.server.session_payload is not None:
             self._send("application/json", json.dumps(self.server.session_payload))
@@ -134,9 +139,12 @@ class _Shop(BaseHTTPRequestHandler):
         page = f'<html><head><meta name="csrf-token" content="{token}"></head></html>'
         self._send("text/html", page, cookie=f"sid={sid}")
 
-    def _valid_token(self) -> bool:
+    def _sid(self) -> str | None:
         cookies = SimpleCookie(self.headers.get("Cookie", ""))
-        sid = cookies["sid"].value if "sid" in cookies else None
+        return cookies["sid"].value if "sid" in cookies else None
+
+    def _valid_token(self) -> bool:
+        sid = self._sid()
         token = self.headers.get("X-CSRF-Token")
         return token is not None and self.server.tokens.get(sid or "") == token
 
@@ -167,26 +175,32 @@ class _ShopServer(ThreadingHTTPServer):
     served = 0
     home_status = 200
     home_redirects = False  # `/` → `/home`, as localised homepages often do
-    home_failures = 0  # the homepage's first N responses are 503s
+    home_failures = 0  # the homepage's first N responses fail with `home_failure_status`
+    home_failure_status = 503
     wrap_pagination = False  # the last listing page links back to the first
     render_js = False  # listing pages are a script shell fetching their tiles
     product_responses: dict[str, tuple[int, str]]
     extra_headers: list[tuple[str, str]]
     session_payload: dict[str, Any] | None = None
     authorizations: list[str]
+    sids: list[tuple[str, str | None]]  # (path, the request's `sid` cookie)
+    bodies: list[dict[str, Any]]  # POST bodies
 
 
-def _skus() -> list[str]:
-    return [f"p{page}{i}" for page in range(1, PAGES + 1) for i in range(PER_PAGE)]
+def _skus(category: str = "dairy") -> list[str]:
+    """Dairy SKUs start with `p`; other categories' with their first letter."""
+    prefix = "p" if category == "dairy" else category[0]
+    return [f"{prefix}{page}{i}" for page in range(1, PAGES + 1) for i in range(PER_PAGE)]
 
 
-def _listing(page: int, wrap: bool = False) -> str:
+def _listing(page: int, wrap: bool = False, category: str = "dairy") -> str:
+    prefix = "p" if category == "dairy" else category[0]
     tiles = "".join(
-        f'<div class="tile" data-sku="p{page}{i}"><a href="/p/p{page}{i}">P</a>'
+        f'<div class="tile" data-sku="{prefix}{page}{i}"><a href="/p/{prefix}{page}{i}">P</a>'
         f'<span class="price">{page}.{i}0</span></div>'
         for i in range(PER_PAGE)
     )
-    more = f'<a class="next" href="/c/dairy?page={page + 1}">next</a>' if page < PAGES else ""
+    more = f'<a class="next" href="/c/{category}?page={page + 1}">next</a>' if page < PAGES else ""
     if wrap and page == PAGES:
         more = '<a class="next" href="/c/dairy">first</a>'
     return f"<html><body>{tiles}{more}</body></html>"
@@ -200,6 +214,8 @@ def shop() -> Iterator[_ShopServer]:
     server.product_responses = {}
     server.extra_headers = []
     server.authorizations = []
+    server.sids = []
+    server.bodies = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -209,6 +225,7 @@ def shop() -> Iterator[_ShopServer]:
 
 SESSION = Template("""
 session:
+  pool: $pool
   setup:
     - request: {url: "$base/"}
       extract:
@@ -236,6 +253,8 @@ def _run_with_log(
     refresh_on: str = "419",
     request_headers: str | None = None,
     health: str = "",
+    pool: int = 1,
+    edit: Callable[[str], str] = lambda config: config,
     exit_code: int = 0,
 ) -> tuple[Path, str]:
     """`max_refresh` set: the Site runs Session Setup and sends the CSRF header."""
@@ -243,7 +262,9 @@ def _run_with_log(
     session = (
         ""
         if max_refresh is None
-        else SESSION.substitute(base=base, max_refresh=max_refresh, refresh_on=refresh_on)
+        else SESSION.substitute(
+            base=base, max_refresh=max_refresh, refresh_on=refresh_on, pool=pool
+        )
     )
     headers = (
         request_headers
@@ -252,7 +273,11 @@ def _run_with_log(
     )
     config = tmp_path / "e2e.yaml"
     config.write_text(
-        _site_config(base=base, settings=settings, session=session, headers=headers, health=health)
+        edit(
+            _site_config(
+                base=base, settings=settings, session=session, headers=headers, health=health
+            )
+        )
     )
     return _crawl_config(tmp_path, *args, exit_code=exit_code)
 
@@ -297,6 +322,7 @@ def test_run_writes_product_records_with_meta(tmp_path: Path, shop: _ShopServer)
         assert meta == {
             "site": "e2e",
             "run_id": run_dir.name,
+            "location": "default",
             "record_type": "product",
             "source_url": f"{base}/api/product",
         }
@@ -432,17 +458,21 @@ def test_a_rotated_token_refreshes_the_session_and_retries(
             assert capture["variables"]["session"]["csrf"] != parent["variables"]["session"]["csrf"]
 
 
-def test_exceeding_max_refresh_stops_refreshing_and_is_reported(
+def test_exceeding_max_refresh_loses_the_only_session_and_fails_the_run(
     tmp_path: Path, shop: _ShopServer
 ) -> None:
     shop.csrf, shop.rotate_every = True, 2
 
-    run_dir, log = _run_with_log(tmp_path, shop, max_refresh=1)
+    run_dir, log = _run_with_log(tmp_path, shop, max_refresh=1, exit_code=2)
 
     assert len(_records(run_dir)) == 4  # the tokens die again after the 4th product
     assert shop.paths.count("/") == 2
     assert "max_refresh (1) reached" in log
-    assert "'session/refresh_exhausted': 2" in log
+    assert "Session 1 lost: max_refresh reached" in log
+    assert "'session/refresh_exhausted'" in log  # once more per request already in flight
+    assert _manifest(run_dir)["health"]["breaches"] == [
+        {"check": "finish_reason", "detail": SESSIONS_LOST}
+    ]
 
 
 def test_session_setup_follows_redirects(tmp_path: Path, shop: _ShopServer) -> None:
@@ -489,13 +519,16 @@ def test_a_failed_session_setup_stops_the_run(tmp_path: Path, shop: _ShopServer)
     assert _manifest(run_dir)["health"] == {
         "level": "failed",
         "breaches": [
-            {"check": "finish_reason", "detail": "Session Setup failed"},
+            {"check": "finish_reason", "detail": SESSIONS_LOST},
             {"check": "records.product", "detail": "no Records"},
         ],
     }
     assert "/c/dairy" not in shop.paths
     assert "Session Setup step 0 failed: Session Setup request got HTTP 503" in log
     assert "'finish_reason': 'session_setup_failed'" in log
+
+
+SESSIONS_LOST = "every Session was lost (Session Setup failed or max_refresh reached)"
 
 
 def _manifest(run_dir: Path) -> dict[str, Any]:
@@ -521,6 +554,7 @@ def test_a_healthy_run_saves_stats_and_health_and_exits_0(
         "null_ratio": {"product": {"name": 1 / 5, "price": 0.0, "sku": 0.0}},
         "requests": {"ok": 8, "failed": {"HTTP 404": 1}, "missing": 0},
         "http_status": {"200": 8, "404": 1},
+        "sessions": {"pool": 1, "lost": 0},
     }
     assert manifest["health"] == {"level": "ok", "breaches": []}
     assert "records: product 5" in log
@@ -1324,3 +1358,138 @@ def test_run_exports_its_records_to_a_postgres_sink(tmp_path: Path, shop: _ShopS
             (run_dir.name,),
         ).fetchall()
     assert rows == [(sku, sku) for sku in sorted(_skus())]
+
+
+# --- Locations and Session Pools -------------------------------------------------
+
+LOCATIONS = """
+locations:
+  melb: {postcode: "3000"}
+  syd: {postcode: "2000"}
+"""
+
+
+def _with_locations(config: str) -> str:
+    config = config.replace("site: e2e\n", f"site: e2e\n{LOCATIONS}", 1)
+    return config.replace(
+        'json: {sku: "{{ sku }}"}', 'json: {sku: "{{ sku }}", postcode: "{{ location.postcode }}"}'
+    )
+
+
+def test_a_run_scrapes_the_location_it_is_given(tmp_path: Path, shop: _ShopServer) -> None:
+    run_dir, _ = _run_with_log(tmp_path, shop, "--location", "melb", edit=_with_locations)
+
+    assert {body["postcode"] for body in shop.bodies} == {"3000"}
+    assert _manifest(run_dir)["location"] == "melb"
+    assert {record["_meta"]["location"] for record in _records(run_dir)} == {"melb"}
+
+
+def test_a_site_with_locations_needs_one_picked(tmp_path: Path, shop: _ShopServer) -> None:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    config = tmp_path / "e2e.yaml"
+    config.write_text(_with_locations(_site_config(base=base, settings="", session="", headers="")))
+    runner = CliRunner()
+
+    missing = runner.invoke(app, ["run", str(config)])
+    unknown = runner.invoke(app, ["run", str(config), "--location", "perth"])
+
+    assert missing.exit_code == unknown.exit_code == 1
+    assert "--location is required; the Site declares: melb, syd" in missing.stderr
+    assert "unknown Location `perth`; the Site declares: melb, syd" in unknown.stderr
+    assert shop.paths == []
+
+
+def test_replay_reuses_the_source_runs_location(tmp_path: Path, shop: _ShopServer) -> None:
+    source, _ = _run_with_log(tmp_path, shop, "--location", "syd", edit=_with_locations)
+
+    replay, network = _offline(tmp_path, "replay", str(source))
+
+    assert replay is not None and network == ""
+    assert _manifest(replay)["location"] == "syd"
+    assert {record["_meta"]["location"] for record in _records(replay)} == {"syd"}
+    assert _record_data(replay) == _record_data(source)
+
+
+def _two_categories(config: str) -> str:
+    dairy = "page_type: listing}]"
+    return config.replace(
+        dairy, dairy.replace("}]", '}, {url: "$BASE/c/bakery", page_type: listing}]'), 1
+    )
+
+
+def _pooled(tmp_path: Path, shop: _ShopServer, **kwargs: Any) -> tuple[Path, str]:
+    base = f"http://127.0.0.1:{shop.server_address[1]}"
+    return _run_with_log(
+        tmp_path,
+        shop,
+        max_refresh=1,
+        pool=2,
+        edit=lambda config: _two_categories(config).replace("$BASE", base),
+        **kwargs,
+    )
+
+
+def _sids_by_category(shop: _ShopServer) -> dict[str, set[str | None]]:
+    """Product requests carry no category, so listing pages stand in for their chain."""
+    sids: dict[str, set[str | None]] = {}
+    for path, sid in shop.sids:
+        if path.startswith("/c/"):
+            sids.setdefault(urlsplit(path).path.removeprefix("/c/"), set()).add(sid)
+    return sids
+
+
+def test_a_session_pool_gives_each_start_request_its_own_session(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf = True
+
+    run_dir, _ = _pooled(tmp_path, shop)
+
+    assert sorted(r["sku"] for r in _records(run_dir)) == sorted(_skus() + _skus("bakery"))
+    assert shop.paths.count("/") == 2
+    sids = _sids_by_category(shop)
+    assert len(sids["dairy"]) == len(sids["bakery"]) == 1
+    assert sids["dairy"] != sids["bakery"]
+    setup = [c for c in _captures(run_dir) if c["page_type"] == "session_setup"]
+    assert sorted(c["session_no"] for c in setup) == [1, 2]
+    assert "session_no" not in next(c for c in _captures(run_dir) if c["page_type"] == "listing")
+    assert _manifest(run_dir)["stats"]["sessions"] == {"pool": 2, "lost": 0}
+
+
+def test_a_lost_session_hands_its_start_requests_to_the_rest(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.csrf, shop.home_failures, shop.home_failure_status = True, 1, 404
+
+    run_dir, log = _pooled(tmp_path, shop, exit_code=1)
+
+    assert sorted(r["sku"] for r in _records(run_dir)) == sorted(_skus() + _skus("bakery"))
+    sids = _sids_by_category(shop)
+    assert sids["dairy"] == sids["bakery"]  # both chains on the surviving Session
+    assert _manifest(run_dir)["health"] == {
+        "level": "degraded",
+        "breaches": [{"check": "session/lost", "detail": "1 of 2 Sessions lost"}],
+    }
+    assert "Session 1 lost" in log or "Session 2 lost" in log
+
+
+def test_losing_every_session_fails_the_run(tmp_path: Path, shop: _ShopServer) -> None:
+    shop.csrf, shop.home_status = True, 404
+
+    run_dir, _ = _pooled(tmp_path, shop, exit_code=2)
+
+    assert _manifest(run_dir)["health"]["breaches"][0] == {
+        "check": "finish_reason",
+        "detail": SESSIONS_LOST,
+    }
+    assert not any(path.startswith("/c/") for path in shop.paths)
+
+
+def test_each_session_refreshes_on_its_own_budget(tmp_path: Path, shop: _ShopServer) -> None:
+    shop.csrf, shop.rotate_every = True, 6  # every token dies once, halfway through
+
+    run_dir, log = _pooled(tmp_path, shop)
+
+    assert sorted(r["sku"] for r in _records(run_dir)) == sorted(_skus() + _skus("bakery"))
+    assert shop.paths.count("/") == 4  # each Session's Setup, then its one refresh
+    assert "'session/refreshes': 2" in log

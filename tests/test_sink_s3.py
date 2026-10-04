@@ -12,7 +12,7 @@ from groceries_scraper.cli import app
 from groceries_scraper.run.directory import SavedRun
 from groceries_scraper.run.sinks import SinkError, export_run, open_sink
 
-PREFIX = "scrapes/shop/20260101T000000Z-abc123"
+PREFIX = "scrapes/shop/default/20260101T000000Z-abc123"  # no Location: `default`
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def _objects(s3: Any) -> dict[str, bytes]:
     }
 
 
-def test_a_run_manifest_and_record_files_are_mirrored_under_prefix_site_and_run_id(
+def test_a_run_manifest_and_record_files_are_mirrored_under_prefix_site_location_and_run_id(
     tmp_path: Path, s3: Any
 ) -> None:
     run = _run(tmp_path, {"product": [{"sku": "a"}], "promotion": [{"label": "x"}]})
@@ -57,14 +57,25 @@ def test_re_exporting_a_run_removes_objects_it_no_longer_has(tmp_path: Path, s3:
     sink.prepare()
     sink.export(SavedRun.load(run))
     (run / "records/promotion.jsonl").unlink()
-    s3.put_object(Bucket="bucket", Key="scrapes/shop/other-run/run.json", Body=b"{}")
+    s3.put_object(Bucket="bucket", Key="scrapes/shop/default/other-run/run.json", Body=b"{}")
 
     sink.export(SavedRun.load(run))
 
     assert sorted(_objects(s3)) == [
         f"{PREFIX}/records/product.jsonl",
         f"{PREFIX}/run.json",
-        "scrapes/shop/other-run/run.json",
+        "scrapes/shop/default/other-run/run.json",
+    ]
+
+
+def test_a_run_is_mirrored_under_its_location(tmp_path: Path, s3: Any) -> None:
+    run = _run(tmp_path, {"product": [{"sku": "a"}]}, location="melb")
+
+    assert export_run(run, [open_sink("s3://bucket")])
+
+    assert sorted(_objects(s3)) == [
+        "shop/melb/20260101T000000Z-abc123/records/product.jsonl",
+        "shop/melb/20260101T000000Z-abc123/run.json",
     ]
 
 

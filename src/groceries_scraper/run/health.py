@@ -66,6 +66,10 @@ def assess_health(site: Site, stats: RunStats) -> RunHealth:
     ratios.append(
         ("max_http_error_ratio", "", stats.http_error_ratio(), checks.max_http_error_ratio)
     )
+    # Losing every Session closes the Run, which `_closed_early` already reports.
+    if stats.sessions_lost and stats.finish_reason != SESSION_SETUP_FAILED:
+        lost = f"{stats.sessions_lost} of {stats.sessions} Sessions lost"
+        breaches.append(Breach("session/lost", lost))
     breaches += [
         Breach(check, f"{value:.3f} > {maximum:.3f}{where}")
         for check, where, value, maximum in ratios
@@ -77,7 +81,8 @@ def assess_health(site: Site, stats: RunStats) -> RunHealth:
 
 def _closed_early(reason: str | None) -> list[Breach]:
     if reason == SESSION_SETUP_FAILED:
-        return [Breach("finish_reason", "Session Setup failed")]
+        detail = "every Session was lost (Session Setup failed or max_refresh reached)"
+        return [Breach("finish_reason", detail)]
     if reason in (FINISHED, LIMIT_REACHED):
         return []
     return [Breach("finish_reason", f"closed early ({reason or 'unknown'})")]

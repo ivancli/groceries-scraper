@@ -272,3 +272,59 @@ def test_defaults_are_found_from_any_working_directory(
     site = load_site(site_file)
 
     assert site.settings.record_level == "all"
+
+
+def test_locations_and_session_pool_parse() -> None:
+    setup = [{"request": {"url": "https://x.example/"}}]
+    site = parse_site(
+        _site(
+            locations={"melb_cbd": {"postcode": "3000"}, "sydney-cbd": {"postcode": 2000}},
+            session={"pool": 3, "setup": setup},
+        ),
+        DEFAULTS,
+    )
+
+    assert site.locations == {"melb_cbd": {"postcode": "3000"}, "sydney-cbd": {"postcode": 2000}}
+    assert site.session is not None and site.session.pool == 3
+    assert parse_site(_site(session={"setup": setup}), DEFAULTS).session.pool == 1  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("name", ["", "melb/cbd", "..", "a b"])
+def test_location_names_must_be_path_safe(name: str) -> None:
+    errors = _errors(_site(locations={name: {}}))
+
+    assert len(errors) == 1
+    assert errors[0].startswith("locations: Location names use letters, digits, `_` and `-`")
+
+
+def test_session_pool_needs_at_least_one_session() -> None:
+    assert _errors(_site(session={"pool": 0, "setup": []})) == [
+        "session.pool: Input should be greater than or equal to 1"
+    ]
+
+
+def test_location_is_a_reserved_template_name() -> None:
+    assert _errors(
+        _site(page_types={"listing": {"follow": [{**A_RULE, "pass": {"location": {"css": "a"}}}]}})
+    ) == [
+        "page_types.listing.follow[0]: "
+        "`as` and `pass` cannot use reserved template names: location",
+    ]
+
+
+def test_a_run_picks_one_of_the_declared_locations() -> None:
+    site = parse_site(_site(locations={"melb": {}, "syd": {}}), DEFAULTS)
+
+    assert site.resolve_location("syd") == "syd"
+    with pytest.raises(ValueError, match="--location is required; the Site declares: melb, syd"):
+        site.resolve_location(None)
+    with pytest.raises(ValueError, match="unknown Location `perth`; the Site declares: melb, syd"):
+        site.resolve_location("perth")
+
+
+def test_a_site_without_locations_has_only_the_default_one() -> None:
+    site = parse_site(_site(), DEFAULTS)
+
+    assert site.resolve_location(None) == site.resolve_location("default") == "default"
+    with pytest.raises(ValueError, match="unknown Location `melb`; the Site declares none"):
+        site.resolve_location("melb")

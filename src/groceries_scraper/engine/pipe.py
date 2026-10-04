@@ -21,6 +21,7 @@ from groceries_scraper.config.models import STEP_KINDS, Pipe, Step, resolve_fn
 class PipeContext:
     variables: Mapping[str, Any] = field(default_factory=dict)
     session: Mapping[str, Any] = field(default_factory=dict)
+    location: Mapping[str, Any] = field(default_factory=dict)  # fixed for the Run
     env: Mapping[str, str] = field(default_factory=dict)
     url: str | None = None
 
@@ -169,6 +170,8 @@ def _var(step: Step, values: list[Any], ctx: PipeContext) -> list[Any]:
     source, name = ctx.variables, step.var
     if name.startswith("session."):
         source, name = ctx.session, name.removeprefix("session.")
+    elif name.startswith("location."):
+        source, name = ctx.location, name.removeprefix("location.")
     if name not in source:
         raise StepError(f"unknown Variable `{step.var}`")
     return [source[name]]
@@ -216,7 +219,12 @@ def template_scope(
 ) -> dict[str, Any]:
     # Reserved names go last so a Variable can never shadow them; config's TEMPLATE_NAMES
     # must list exactly these keys (enforced by a test).
-    reserved = {"value": plain(value), "session": ctx.session, "env": ctx.env}
+    reserved = {
+        "value": plain(value),
+        "session": ctx.session,
+        "location": ctx.location,
+        "env": ctx.env,
+    }
     return {**ctx.variables, **(names or {}), **reserved}
 
 

@@ -188,6 +188,7 @@ def test_fixture_cli_strips_only_volatile_record_metadata(
                 "site": "shop",
                 "record_type": "product",
                 "source_url": "https://shop.example/",
+                "location": "default",  # a Run from before Locations scraped the implicit one
             },
         }
     ]

@@ -53,6 +53,7 @@ class RunRecorder:
         self._manifest: dict[str, Any] = {
             "site": run.site,
             "run_id": run.run_id,
+            "location": run.location,
             "config": snapshot,
             "config_hash": hashlib.sha256(canonical.encode()).hexdigest(),
         }
