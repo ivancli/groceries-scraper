@@ -230,7 +230,7 @@ records:
 
 ```
 runs/<site>/<run_id>/
-  run.json                     # Location, config snapshot + hash, stats, Run Health
+  run.json                     # Location, Kubernetes Job, config snapshot + hash, stats, Run Health
   captures/0001-listing.meta.json   # request (redacted), response meta, parent capture, page type, variables
   captures/0001-listing.body        # raw body
   traces/0001-listing.trace.json    # per-field / per-follow-rule step values + errors
@@ -262,6 +262,10 @@ runs/<site>/<run_id>/
   The hash covers the redacted snapshot; it does not identify changes to secrets.
   The snapshot uses normalized Pipes (`<pipe>` in Fields); unchanged model defaults are
   omitted and restored by the config loader.
+- Inside a Kubernetes Job, `run.json` also records `job`: the Job's name, from the
+  `SCRAPE_JOB_NAME` environment variable (set through the Downward API), so a Run
+  directory or Archive traces back to the Job and its logs. Without the variable there is
+  no `job` key; readers treat it as optional.
 - Capture numbers are assigned in response order, including Session Setup, redirects and
   retries. `parent_capture_no` links Follow Requests and successive HTTP attempts. Scrapy's
   internal robots.txt request has no Page Type and is excluded. `errors` mode can leave gaps

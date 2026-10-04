@@ -26,7 +26,9 @@ class Capture:
 
 
 class RunRecorder:
-    def __init__(self, run: Run, site: Site, replay_of: Run | None = None) -> None:
+    def __init__(
+        self, run: Run, site: Site, replay_of: Run | None = None, job: str | None = None
+    ) -> None:
         self.run = run
         self.stats = RunStats.for_site(site)
         self.level = site.settings.record_level
@@ -57,6 +59,8 @@ class RunRecorder:
             "config": snapshot,
             "config_hash": hashlib.sha256(canonical.encode()).hexdigest(),
         }
+        if job:
+            self._manifest["job"] = job
         if replay_of is not None:
             self._manifest["replay_of"] = {"site": replay_of.site, "run_id": replay_of.run_id}
             self._manifest["missing"] = []
