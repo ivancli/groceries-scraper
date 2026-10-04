@@ -19,12 +19,11 @@ class Archive(Protocol):
     def prepare(self) -> None:
         """Fails fast, before a crawl spends time on a Run that can't be archived."""
 
-    def archive(self, run: SavedRun) -> str:
-        """Returns the URL the Run was archived under."""
+    def archive(self, run: SavedRun) -> str: ...
 
 
 def open_archive(url: str) -> Archive:
-    """Errors name only the scheme, as for Sinks."""
+    """Errors never echo the URL, which may carry credentials."""
     parsed = urlsplit(url)
     if parsed.scheme != "s3":
         raise ArchiveUrlError(

@@ -1,4 +1,4 @@
-"""Builds finished Run directories for sink tests."""
+"""Builds finished Run directories for Sink and Archive tests."""
 
 import json
 from pathlib import Path
@@ -31,3 +31,11 @@ def saved_run(
         lines = [json.dumps({**record, "_meta": {"run_id": run_id}}) for record in typed]
         (path / "records" / f"{record_type}.jsonl").write_text("".join(f"{x}\n" for x in lines))
     return path
+
+
+def s3_objects(s3: Any) -> dict[str, bytes]:
+    listing = s3.list_objects_v2(Bucket="bucket").get("Contents", [])
+    return {
+        entry["Key"]: s3.get_object(Bucket="bucket", Key=entry["Key"])["Body"].read()
+        for entry in listing
+    }

@@ -9,6 +9,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 from groceries_scraper.run.archive import ArchiveError
 from groceries_scraper.run.directory import SavedRun
 
+WRITE_CHECK = ".write-check"  # left in place: an Archive's credentials need not delete
+
 
 @dataclass(frozen=True)
 class S3Archive:
@@ -19,8 +21,10 @@ class S3Archive:
         return f"s3://{self.bucket}/{self.prefix}".rstrip("/")
 
     def prepare(self) -> None:
+        """Writes a marker rather than HEADs the bucket: a readable bucket may refuse writes."""
+        key = "/".join(part for part in (self.prefix, WRITE_CHECK) if part)
         try:
-            boto3.client("s3").head_bucket(Bucket=self.bucket)
+            boto3.client("s3").put_object(Bucket=self.bucket, Key=key, Body=b"")
         except (BotoCoreError, ClientError) as exc:
             raise ArchiveError(f"{self} is not usable: {exc}") from None
 

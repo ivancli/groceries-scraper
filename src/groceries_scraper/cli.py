@@ -87,9 +87,12 @@ def _open_archive_or_exit(url: str | None) -> Archive | None:
     try:
         archive = open_archive(url)
         archive.prepare()
-    except (ArchiveUrlError, ArchiveError) as exc:
+    except ArchiveUrlError as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(code=ARCHIVE_FAILED if isinstance(exc, ArchiveError) else 1) from None
+        raise typer.Exit(code=1) from None
+    except ArchiveError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=ARCHIVE_FAILED) from None
     return archive
 
 
@@ -156,14 +159,14 @@ def run(
         typer.Option(help="The Location to scrape; required when the Site declares any."),
     ] = None,
     sink: SinkOption = None,
-    archive: ArchiveOption = None,
+    archive_url: ArchiveOption = None,
 ) -> None:
     """Run a Site; exits 0 / 1 / 2 for Run Health, 3 if export failed, 4 if archiving failed."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
-    _refuse_overlap_or_exit(archive, sink)
+    _refuse_overlap_or_exit(archive_url, sink)
     sinks = _open_sinks_or_exit(sink)
-    archiver = _open_archive_or_exit(archive)
+    archive = _open_archive_or_exit(archive_url)
     if record not in (None, "all", "errors", "off"):
         raise typer.BadParameter("must be all, errors or off", param_hint="--record")
     site = _load_site_or_exit(site_config)
@@ -173,7 +176,7 @@ def run(
         )
     new_run = create_run(RUNS_DIR, site.site, location=_location_or_exit(site, location))
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks, archiver)
+    _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks, archive)
 
 
 @app.command()
@@ -181,15 +184,15 @@ def replay(
     run_dir: Path,
     config: Annotated[Path | None, typer.Option(help="Edited Site config.")] = None,
     sink: SinkOption = None,
-    archive: ArchiveOption = None,
+    archive_url: ArchiveOption = None,
 ) -> None:
     """Replay a prior Run's Captures offline as a new Run; exits like `run`."""
     from groceries_scraper.adapter.crawl import crawl
     from groceries_scraper.adapter.replay import ReplayError, SourceRun
 
-    _refuse_overlap_or_exit(archive, sink)
+    _refuse_overlap_or_exit(archive_url, sink)
     sinks = _open_sinks_or_exit(sink)
-    archiver = _open_archive_or_exit(archive)
+    archive = _open_archive_or_exit(archive_url)
     try:
         source = SourceRun.load(run_dir)
     except ReplayError as exc:
@@ -206,7 +209,7 @@ def replay(
     location = _location_or_exit(site, source.run.location)
     new_run = create_run(RUNS_DIR, site.site, location=location)
     typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
-    _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks, archiver)
+    _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks, archive)
 
 
 @app.command()

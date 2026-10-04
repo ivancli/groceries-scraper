@@ -166,7 +166,7 @@ S3 credentials and region come from the standard AWS environment. See
 
 ## Archive a Run to S3
 
-`--archive` copies the whole Run directory (Captures and Traces included) to S3 after every
+`--archive` copies the whole Run directory (Captures and Extraction Traces included) to S3 after every
 Run, failed ones too, so it can be inspected after the machine is gone. It needs the `s3`
 extra, must not share a prefix with an S3 `--sink`, and exits `4` if it is unusable or
 fails (a Sink failure's `3` wins).
