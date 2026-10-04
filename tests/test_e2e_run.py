@@ -1416,6 +1416,21 @@ def test_replay_reuses_the_source_runs_location(tmp_path: Path, shop: _ShopServe
     assert _record_data(replay) == _record_data(source)
 
 
+def test_run_and_replay_record_the_kubernetes_job_name_when_set(
+    tmp_path: Path, shop: _ShopServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SCRAPE_JOB_NAME", raising=False)
+    unnamed = _run(tmp_path, shop)
+    monkeypatch.setenv("SCRAPE_JOB_NAME", "scrape-e2e-29301")
+    replay, _ = _offline(tmp_path, "replay", str(unnamed))
+    monkeypatch.setenv("SCRAPE_JOB_NAME", "scrape-e2e-29302")
+    named, _ = _offline(tmp_path, "run", "e2e.yaml", exit_code=2)  # offline: fails, still saved
+
+    assert "job" not in _manifest(unnamed)
+    assert replay is not None and _manifest(replay)["job"] == "scrape-e2e-29301"
+    assert named is not None and _manifest(named)["job"] == "scrape-e2e-29302"
+
+
 def _two_categories(config: str) -> str:
     dairy = "page_type: listing}]"
     return config.replace(
