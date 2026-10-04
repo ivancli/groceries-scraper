@@ -19,6 +19,7 @@ src/groceries_scraper/
   cli.py                     # Typer app: validate | run | replay | inspect | fixture | diff
 tests/sites/<site>/          # Golden Fixtures (captures + expected records)
 runs/<site>/<run_id>/        # Run output (gitignored)
+Dockerfile                   # one image for every Site, published to GHCR by CI
 ```
 
 ## Site config — full example

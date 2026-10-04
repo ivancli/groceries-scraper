@@ -1,4 +1,4 @@
-# One image for every Site: the CLI, Chromium for `render: browser`, and the baked-in configs.
+# One image for every Site, so there is one thing to build, scan and pin.
 FROM python:3.12-slim AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.12.20 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never

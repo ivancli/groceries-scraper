@@ -29,6 +29,7 @@ jobs:
       - run: uv run pytest
 
   image:
+    needs: check  # never publish an image whose code failed the checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,13 +59,18 @@ jobs:
         run: >-
           docker run --rm --network none -v "$PWD/tests/sites/aldi:/fixture:ro" "$IMAGE"
           replay /fixture --config sites/aldi.yaml
-      - name: Launches the Chromium matching the locked Playwright
+      # Playwright only launches the Chromium build it pins, so a launch proves the match.
+      - name: Launches the Chromium of the locked Playwright
         run: |
+          locked=$(sed -n '/^name = "playwright"$/{n;s/^version = "\(.*\)"$/\1/p}' uv.lock)
           docker run --rm --network none --entrypoint python "$IMAGE" -c '
+          import sys
+          from importlib.metadata import version
           from playwright.sync_api import sync_playwright
+          assert version("playwright") == sys.argv[1], (version("playwright"), sys.argv[1])
           with sync_playwright() as p:
-              print("chromium", p.chromium.launch().version)'
-      - name: Push to GHCR
+              print("playwright", sys.argv[1], "chromium", p.chromium.launch().version)' "$locked"
+      - name: Pushes to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
