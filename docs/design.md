@@ -169,9 +169,13 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - A Record Type may declare `fields:` once at Site level; `scrape validate` (and every Run)
   then checks each reachable Page Type emitting it against that contract. It is static:
   emitted Records are not re-checked.
-- The contract is closed and exact: every contract Field must exist with the same `type`, and
-  no other Field may; a contract `required: true` needs `required: true` on the Page Type
-  (an emitter may be stricter than the contract).
+- The contract is closed, types are exact, and required is at least as strict: every contract
+  Field must exist with the same explicit `type` (an untyped Field skips Coercion, so nothing
+  would enforce it), and no other Field may; a contract `required: true` needs
+  `required: true` on the Page Type (`default` is not enough: a failed Coercion still yields
+  null), while an emitter may require a Field the contract leaves optional.
+- Unreachable emitting Page Types are not checked (they never run); the unreachable warning
+  flags them, and they are checked once reachable.
 - Nested Fields are checked too. An `object` takes `fields`; an `array` takes either
   `items` (scalar type, matching a Page Type's `items`) or `fields` (matching `each` + `fields`).
 
