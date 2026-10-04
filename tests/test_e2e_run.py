@@ -1420,15 +1420,17 @@ def test_run_and_replay_record_the_kubernetes_job_name_when_set(
     tmp_path: Path, shop: _ShopServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("SCRAPE_JOB_NAME", raising=False)
-    unnamed = _run(tmp_path, shop)
+    local_run = _run(tmp_path, shop)
+    local_replay, _ = _offline(tmp_path, "replay", str(local_run))
     monkeypatch.setenv("SCRAPE_JOB_NAME", "scrape-e2e-29301")
-    replay, _ = _offline(tmp_path, "replay", str(unnamed))
+    job_replay, _ = _offline(tmp_path, "replay", str(local_run))
     monkeypatch.setenv("SCRAPE_JOB_NAME", "scrape-e2e-29302")
-    named, _ = _offline(tmp_path, "run", "e2e.yaml", exit_code=2)  # offline: fails, still saved
+    job_run, _ = _offline(tmp_path, "run", "e2e.yaml", exit_code=2)  # offline: fails, still saved
 
-    assert "job" not in _manifest(unnamed)
-    assert replay is not None and _manifest(replay)["job"] == "scrape-e2e-29301"
-    assert named is not None and _manifest(named)["job"] == "scrape-e2e-29302"
+    assert "job" not in _manifest(local_run)
+    assert local_replay is not None and "job" not in _manifest(local_replay)
+    assert job_replay is not None and _manifest(job_replay)["job"] == "scrape-e2e-29301"
+    assert job_run is not None and _manifest(job_run)["job"] == "scrape-e2e-29302"
 
 
 def _two_categories(config: str) -> str:
