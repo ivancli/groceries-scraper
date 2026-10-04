@@ -7,17 +7,34 @@ import typer
 
 from groceries_scraper.config import ConfigError, Findings, Site, checked_site, load_checked_site
 from groceries_scraper.run import create_run
+from groceries_scraper.run.archive import (
+    Archive,
+    ArchiveError,
+    ArchiveUrlError,
+    open_archive,
+    overlapping_sinks,
+)
+from groceries_scraper.run.directory import RunDirectoryError, SavedRun
 from groceries_scraper.run.sinks import ExportError, Sink, SinkError, export_run, open_sink
 from groceries_scraper.run.summary import RunOutcome
 
 RUNS_DIR = Path("runs")
 EXPORT_FAILED = 3  # beyond Run Health's 0 / 1 / 2
+ARCHIVE_FAILED = 4
 
 SinkOption = Annotated[
     list[str] | None,
     typer.Option(
         "--sink",
         help="Export the finished Run to postgres://… or s3://<bucket>[/<prefix>]; repeatable.",
+    ),
+]
+
+ArchiveOption = Annotated[
+    str | None,
+    typer.Option(
+        "--archive",
+        help="Copy the whole Run directory to s3://<bucket>[/<prefix>], whatever its health.",
     ),
 ]
 
@@ -56,6 +73,36 @@ def _location_or_exit(site: Site, location: str | None) -> str:
         raise typer.Exit(code=1) from None
 
 
+def _refuse_overlap_or_exit(archive_url: str | None, sink_urls: list[str] | None) -> None:
+    if archive_url is None:
+        return
+    if overlapping := overlapping_sinks(archive_url, sink_urls or []):
+        typer.echo(f"--archive {archive_url} overlaps --sink {overlapping[0]}", err=True)
+        raise typer.Exit(code=1)
+
+
+def _open_archive_or_exit(url: str | None) -> Archive | None:
+    if url is None:
+        return None
+    try:
+        archive = open_archive(url)
+        archive.prepare()
+    except (ArchiveUrlError, ArchiveError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=ARCHIVE_FAILED if isinstance(exc, ArchiveError) else 1) from None
+    return archive
+
+
+def _archive(run_dir: Path, archive: Archive) -> bool:
+    try:
+        url = archive.archive(SavedRun.load(run_dir))
+    except (ArchiveError, RunDirectoryError) as exc:
+        typer.echo(str(exc), err=True)
+        return False
+    typer.echo(f"Archived Run {run_dir.name} to {url}", err=True)
+    return True
+
+
 def _open_sinks_or_exit(urls: list[str] | None) -> list[Sink]:
     try:
         sinks = [open_sink(url) for url in urls or []]
@@ -81,11 +128,17 @@ def _export(run_dir: Path, sinks: list[Sink], force: bool = False) -> int | None
     return 1
 
 
-def _report_and_exit(outcome: RunOutcome, run_dir: Path, sinks: list[Sink]) -> NoReturn:
+def _report_and_exit(
+    outcome: RunOutcome, run_dir: Path, sinks: list[Sink], archive: Archive | None
+) -> NoReturn:
     typer.echo(outcome.summary())
+    # Before the Sinks, so a Run stopped by SIGTERM is archived within the grace period.
+    archive_failed = archive is not None and not _archive(run_dir, archive)
     # Run Health's code can't say a Sink failed; a skipped failed Run keeps its own.
     sink_failed = bool(sinks) and _export(run_dir, sinks) == EXPORT_FAILED
-    raise typer.Exit(code=EXPORT_FAILED if sink_failed else outcome.health.exit_code)
+    if sink_failed:
+        raise typer.Exit(code=EXPORT_FAILED)
+    raise typer.Exit(code=ARCHIVE_FAILED if archive_failed else outcome.health.exit_code)
 
 
 def _warn(warnings: list[str]) -> None:
@@ -103,11 +156,14 @@ def run(
         typer.Option(help="The Location to scrape; required when the Site declares any."),
     ] = None,
     sink: SinkOption = None,
+    archive: ArchiveOption = None,
 ) -> None:
-    """Run a Site; exits 0 / 1 / 2 for Run Health ok / degraded / failed, 3 if export failed."""
+    """Run a Site; exits 0 / 1 / 2 for Run Health, 3 if export failed, 4 if archiving failed."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
+    _refuse_overlap_or_exit(archive, sink)
     sinks = _open_sinks_or_exit(sink)
+    archiver = _open_archive_or_exit(archive)
     if record not in (None, "all", "errors", "off"):
         raise typer.BadParameter("must be all, errors or off", param_hint="--record")
     site = _load_site_or_exit(site_config)
@@ -117,7 +173,7 @@ def run(
         )
     new_run = create_run(RUNS_DIR, site.site, location=_location_or_exit(site, location))
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks)
+    _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks, archiver)
 
 
 @app.command()
@@ -125,12 +181,15 @@ def replay(
     run_dir: Path,
     config: Annotated[Path | None, typer.Option(help="Edited Site config.")] = None,
     sink: SinkOption = None,
+    archive: ArchiveOption = None,
 ) -> None:
     """Replay a prior Run's Captures offline as a new Run; exits like `run`."""
     from groceries_scraper.adapter.crawl import crawl
     from groceries_scraper.adapter.replay import ReplayError, SourceRun
 
+    _refuse_overlap_or_exit(archive, sink)
     sinks = _open_sinks_or_exit(sink)
+    archiver = _open_archive_or_exit(archive)
     try:
         source = SourceRun.load(run_dir)
     except ReplayError as exc:
@@ -147,7 +206,7 @@ def replay(
     location = _location_or_exit(site, source.run.location)
     new_run = create_run(RUNS_DIR, site.site, location=location)
     typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
-    _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks)
+    _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks, archiver)
 
 
 @app.command()

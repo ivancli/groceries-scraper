@@ -237,6 +237,7 @@ runs/<site>/<run_id>/
   records/product.jsonl        # each record has _meta: site, run_id, location, record_type, scraped_at, source_url, capture_no
 ```
 
+- `--archive` copies the finished directory to S3 as is (see [Archive](#archive)).
 - Redacted by default: `Cookie`, `Set-Cookie`, `Authorization`, plus Site-configured headers.
 - `record_level: errors` keeps only non-2xx or extraction-error Captures.
   Use `record_level: "off"` with quotes: YAML treats an unquoted `off` as a boolean.
@@ -325,7 +326,8 @@ runs/<site>/<run_id>/
   are not counted. `max_null_ratio` checks each Record Type with that Field. Ratios with an
   empty denominator are 0; `max_*` checks breach only above their threshold.
 - `scrape run` ends with a short summary on stdout and exits with the Run Health's code,
-  or `3` when a `--sink` is unusable or fails to take a non-failed Run.
+  `4` when the `--archive` is unusable or fails to take the Run, or `3` (over `4`) when a
+  `--sink` is unusable or fails to take a non-failed Run.
 
 ## CLI
 
@@ -333,8 +335,8 @@ For installation and a runnable retailer example, see the [quickstart](../README
 
 ```
 scrape validate sites/<site>.yaml
-scrape run sites/<site>.yaml [--location NAME] [--limit N] [--record all|errors|off] [--sink URL ...]
-scrape replay runs/<site>/<run_id> [--config edited.yaml] [--sink URL ...]
+scrape run sites/<site>.yaml [--location NAME] [--limit N] [--record all|errors|off] [--sink URL ...] [--archive URL]
+scrape replay runs/<site>/<run_id> [--config edited.yaml] [--sink URL ...] [--archive URL]
 scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
 scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
@@ -377,7 +379,7 @@ export of the same Run, so re-running `export` is safe. A failing Sink does not 
 others; errors name Sinks without credentials.
 
 Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink fails;
-`run`/`replay` keep their Run Health code unless a Sink fails (3).
+`run`/`replay` keep their Run Health code unless a Sink fails (3) or the Archive does (4).
 
 - `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's
   `scrape_runs` row (site, run_id, location, health, manifest) and its `scrape_records` rows
@@ -387,6 +389,21 @@ Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink f
 - `s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`): mirrors `run.json` and
   `records/*.jsonl` to `<prefix>/<site>/<location>/<run_id>/`, removing objects the Run no longer
   has; `run.json` is uploaded last as the completion marker.
+
+## Archive
+
+`run`/`replay --archive s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`) copies the whole
+Run directory, byte for byte, to `<prefix>/<site>/<location>/<run_id>/` so it outlives the
+machine that ran it. Unlike a Sink it is made for every Run, `failed` ones included, and
+nothing is ever pruned (ADR-0003). It holds whatever `record_level` kept: `off` archives
+only `run.json` and Records. `run.json` is uploaded last as the completion marker.
+
+Order: an Archive URL overlapping an S3 `--sink` (same bucket, one prefix containing the
+other) is refused (exit 1); the Sinks and the Archive are checked (an unusable Archive exits
+4); the crawl; the Archive, which prints its URL; the Sinks. The Archive goes first so a Run
+stopped by SIGTERM is archived within the shutdown grace period. Credentials come from the
+standard AWS environment, as for the S3 Sink. The bucket holds raw responses: keep it
+private and encrypted.
 
 ## Deferred (post-v1)
 Browser waits beyond network idle (e.g. for a selector) · a proxy per Session · price history across many Runs · nightly live smoke runs.

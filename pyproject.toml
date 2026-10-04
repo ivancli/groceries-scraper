@@ -55,7 +55,7 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["jsonpath_ng", "jsonpath_ng.*", "boto3", "botocore.*"]  # ship no type hints
+module = ["jsonpath_ng", "jsonpath_ng.*", "boto3", "boto3.*", "botocore.*"]  # ship no type hints
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
