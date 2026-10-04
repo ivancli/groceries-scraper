@@ -175,6 +175,27 @@ fails (a Sink failure's `3` wins).
 uv run scrape run sites/aldi.yaml --archive s3://my-bucket/archive --sink s3://my-bucket/scrapes
 ```
 
+## Run in a container
+
+One image runs every Site. It holds the CLI with the `postgres` and `s3` extras,
+the Chromium build matching the locked Playwright, `defaults.yaml` and `sites/`.
+It runs as a non-root user with `scrape` as the entrypoint and writes Runs under
+`/app/runs`. Build it locally from the repository root:
+
+```bash
+docker build -t groceries-scraper:dev .
+docker run --rm groceries-scraper:dev validate sites/aldi.yaml
+docker run --rm -v "$PWD/runs:/app/runs" groceries-scraper:dev run sites/aldi.yaml --limit 5
+```
+
+The `runs` mount keeps the Run on the host. It must be writable by the image's user
+(UID 10001), or pass `--user "$(id -u)"` to write as yourself. Site configs are baked in,
+so rebuild after editing them, or mount `-v "$PWD/sites:/app/sites:ro"`.
+
+CI builds the image on every pull request and checks it offline: `validate` for every
+Site and a Replay of the ALDI Golden Fixture. On `main` it pushes
+`ghcr.io/ivancli/groceries-scraper:<sha>` and `:main`.
+
 ## Save and test Golden Fixtures
 
 Finish a crawl without `--limit`, with recording enabled, then save it:

@@ -1,0 +1,7 @@
+*
+!pyproject.toml
+!uv.lock
+!src/
+!sites/
+!defaults.yaml
+**/__pycache__

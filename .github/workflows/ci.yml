@@ -27,3 +27,51 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run mypy
       - run: uv run pytest
+
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: groceries-scraper:ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Runs scrape --help as a non-root user
+        run: |
+          docker run --rm "$IMAGE" --help
+          test "$(docker run --rm --entrypoint id "$IMAGE" -u)" != 0
+      # Offline, so the checks below can't flake on a retailer or pass by fetching.
+      - name: Validates every baked-in Site config
+        run: >-
+          docker run --rm --network none --entrypoint sh "$IMAGE"
+          -c 'for f in sites/*.yaml; do scrape validate "$f" || exit 1; done'
+      - name: Replays a Golden Fixture
+        run: >-
+          docker run --rm --network none -v "$PWD/tests/sites/aldi:/fixture:ro" "$IMAGE"
+          replay /fixture --config sites/aldi.yaml
+      - name: Launches the Chromium matching the locked Playwright
+        run: |
+          docker run --rm --network none --entrypoint python "$IMAGE" -c '
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              print("chromium", p.chromium.launch().version)'
+      - name: Push to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/groceries-scraper"
+          for tag in "$GITHUB_SHA" main; do
+            docker tag "$IMAGE" "$repo:$tag"
+            docker push "$repo:$tag"
+          done
