@@ -21,7 +21,7 @@ def crawl(
     settings[RECORDER] = RunRecorder(run, site, replay_of.run if replay_of is not None else None)
     process = CrawlerProcess(settings)
     crawler = process.create_crawler(SiteSpider)
-    process.crawl(crawler, site=site)
+    process.crawl(crawler, site=site, location=site.locations.get(run.location, {}))
     started = time.monotonic()
     try:
         process.start()

@@ -232,3 +232,11 @@ def test_template_names_cannot_be_shadowed_by_variables() -> None:
     scope = template_scope("selected", ctx)
 
     assert (scope["value"], scope["session"]) == ("selected", {"csrf": "tok"})
+
+
+def test_var_and_templates_read_location_variables() -> None:
+    ctx = {"location": {"postcode": "3000"}}
+
+    assert _run("{var: location.postcode}", **ctx) == ["3000"]
+    assert _run("{template: 'pc={{ location.postcode }}'}", **ctx) == ["pc=3000"]
+    assert _error("{var: location.store}", **ctx) == "unknown Variable `location.store`"

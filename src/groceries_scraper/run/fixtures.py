@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from groceries_scraper.config.models import DEFAULT_LOCATION
 from groceries_scraper.run.directory import finish_reason, read_manifest
 from groceries_scraper.run.health import FINISHED
 
@@ -44,6 +45,8 @@ def _stable_record(record: Any) -> dict[str, Any]:
         if key not in {"run_id", "scraped_at", "capture_no"}
     }
     if metadata:
+        # Records from before Locations scraped the implicit one.
+        metadata.setdefault("location", DEFAULT_LOCATION)
         data["_meta"] = metadata
     return data
 

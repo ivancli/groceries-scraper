@@ -1,4 +1,4 @@
-"""Mirrors a Run's `run.json` and `records/*.jsonl` to `s3://<bucket>/<prefix>/<site>/<run_id>/`."""
+"""Mirrors a Run's `run.json` and `records/*.jsonl` to `s3://<bucket>/<prefix>/<site>/<location>/<run_id>/`."""
 
 from dataclasses import dataclass
 
@@ -28,7 +28,8 @@ class S3Sink:
     def export(self, run: SavedRun) -> None:
         """`run.json` goes last, so readers can treat it as the Run's completion marker."""
         client = boto3.client("s3")
-        base = "/".join(part for part in (self.prefix, run.site, run.run_id) if part)
+        parts = (self.prefix, run.site, run.location, run.run_id)
+        base = "/".join(part for part in parts if part)
         uploads = {
             f"{base}/records/{record_type}.jsonl": run.path / "records" / f"{record_type}.jsonl"
             for record_type in run.record_types()

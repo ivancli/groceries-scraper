@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -202,7 +203,7 @@ class RequestTemplate(_Model):
 
 
 # Always in a template's scope, so an `as:` or `pass:` name using one would be ignored.
-TEMPLATE_NAMES = ("value", "session", "env")
+TEMPLATE_NAMES = ("value", "session", "location", "env")
 
 
 class StartRequest(_Model):
@@ -287,9 +288,22 @@ class SetupStep(_Model):
 
 
 class Session(_Model):
+    pool: Annotated[int, Field(ge=1)] = 1
     setup: list[SetupStep]
     refresh_on: list[int] = Field(default_factory=list)
     max_refresh: Annotated[int, Field(ge=0)] = 1
+
+
+DEFAULT_LOCATION = "default"  # the implicit Location of a Site that declares none
+_LOCATION_NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _location_names(locations: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    # Names become S3 path segments.
+    if bad := [name for name in locations if not _LOCATION_NAME.fullmatch(name)]:
+        names = ", ".join(f"`{name}`" for name in bad)
+        raise _config_error(f"Location names use letters, digits, `_` and `-`: {names}")
+    return locations
 
 
 class Replay(_Model):
@@ -340,9 +354,26 @@ class Health(_Model):
 class Site(_Model):
     site: str
     settings: Settings
+    # Location name -> its Variables (`location.*`).
+    locations: Annotated[dict[str, dict[str, Any]], AfterValidator(_location_names)] = Field(
+        default_factory=dict
+    )
     session: Session | None = None
     replay: Replay = Field(default_factory=Replay)
     records: dict[str, RecordType] = Field(default_factory=dict)
     health: Health = Field(default_factory=Health)
     start: Annotated[list[StartRequest], Field(min_length=1)]
     page_types: Annotated[dict[str, PageType], Field(min_length=1)]
+
+    def resolve_location(self, name: str | None) -> str:
+        """The Location a Run scrapes; one must be picked when the Site declares any."""
+        if not self.locations:
+            if name in (None, DEFAULT_LOCATION):
+                return DEFAULT_LOCATION
+            raise ValueError(f"unknown Location `{name}`; the Site declares none")
+        declared = ", ".join(self.locations)
+        if name is None:
+            raise ValueError(f"--location is required; the Site declares: {declared}")
+        if name not in self.locations:
+            raise ValueError(f"unknown Location `{name}`; the Site declares: {declared}")
+        return name

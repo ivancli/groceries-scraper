@@ -562,3 +562,46 @@ def test_every_reachable_emitter_is_checked_but_unreachable_ones_are_not() -> No
         "page_types.pdp.fields.sku: no type; add `type: string` to match Record Type "
         "`product`'s contract",
     ]
+
+
+# --- Locations ----------------------------------------------------------------
+
+
+def test_location_variables_must_be_set_by_every_location() -> None:
+    locations = {"melb": {"postcode": "3000", "store": "12"}, "syd": {"postcode": "2000"}}
+    session = {
+        "setup": [
+            {"request": {"url": "https://x/", "json": {"pc": "{{ location.postcode }}"}}},
+        ]
+    }
+    fields = {
+        "a": {"var": "location.store"},
+        "b": [{"css": "h1::text"}, {"template": "{{ location['region'] }}"}],
+    }
+
+    errors = _errors(_record_page("html", fields), session=session, locations=locations)
+
+    assert errors == [
+        "page_types.listing.fields.a: Location Variable `location.store` is not set by "
+        "Location `syd`",
+        "page_types.listing.fields.b[1]: Location Variable `location.region` is not set by "
+        "Locations `melb`, `syd`",
+    ]
+
+
+def test_location_variables_need_declared_locations() -> None:
+    fields = {"a": {"var": "location.postcode"}}
+
+    assert _errors(_record_page("html", fields)) == [
+        "page_types.listing.fields.a: Location Variable `location.postcode` is not set: "
+        "the Site declares no Locations",
+    ]
+
+
+def test_a_session_pool_larger_than_the_start_requests_is_a_warning() -> None:
+    findings = _check({"listing": {}}, session={"pool": 2, "setup": []})
+
+    assert findings.errors == []
+    assert findings.warnings == [
+        "session.pool: 2 Sessions but 1 Start Request; Sessions without a Start Request stay idle"
+    ]

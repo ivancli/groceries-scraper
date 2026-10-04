@@ -45,7 +45,7 @@ The CLI prints the new Run directory and a summary. Find the products at:
 runs/aldi/<run_id>/records/product.jsonl
 ```
 
-Each line is one JSON object. Its `_meta` gives the Site, Run id, Record Type,
+Each line is one JSON object. Its `_meta` gives the Site, Run id, Location, Record Type,
 scrape time, source URL, and Capture number. The Run also contains:
 
 ```text
@@ -73,7 +73,9 @@ producing Records, use Captures and Traces to update its selectors.
 5. Add Follow Rules for pagination or listing-to-detail requests. Use `pass` to
    carry values to a child Page Type, and Request Templates for POSTs or headers.
 6. Add Session Setup if you need cookies or tokens. Read credentials from environment
-   variables using `{{ env.NAME }}`; don't put credentials into YAML.
+   variables using `{{ env.NAME }}`; don't put credentials into YAML. If a store or
+   postcode changes the data, declare `locations` and pick one per Run with
+   `--location`; `session.pool` spreads a Run across several Sessions.
 7. Validate, then run a small trial and inspect its output before expanding the crawl.
 
 For example, adapt these URLs and selectors to a real HTML listing:
@@ -209,7 +211,7 @@ TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres uv run pyt
 docker compose down
 ```
 
-Multiple Sessions per Site, price history across many Runs, schema contracts, and scheduled live checks are deferred.
+A proxy per Session, price history across many Runs, schema contracts, and scheduled live checks are deferred.
 Use HTML or JSON endpoints for now. Offline fixtures detect changes to extraction
 code and configs; they do not detect changes to the live website.
 

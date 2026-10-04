@@ -26,7 +26,8 @@ def db() -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
 
 def _runs(db: psycopg.Connection[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     return db.execute(
-        "SELECT site, run_id, health, manifest->>'run_id' FROM scrape_runs ORDER BY run_id"
+        "SELECT site, location, run_id, health, manifest->>'run_id' FROM scrape_runs"
+        " ORDER BY run_id"
     ).fetchall()
 
 
@@ -54,7 +55,7 @@ def test_a_run_and_its_records_are_stored_with_record_keys_apart_from_meta(
     assert export_run(run, [sink])
 
     run_id = "20260101T000000Z-abc123"
-    assert _runs(db) == [("shop", run_id, "degraded", run_id)]
+    assert _runs(db) == [("shop", "default", run_id, "degraded", run_id)]
     meta = {"run_id": run_id}
     assert _records(db) == [
         (run_id, "product", {"sku": "a"}, {"sku": "a", "price": 1.5}, meta),
@@ -76,7 +77,7 @@ def test_re_exporting_a_run_replaces_only_that_runs_rows(
 
     sink.export(SavedRun.load(second))
 
-    assert [row[:2] for row in _runs(db)] == [("shop", "1"), ("shop", "2")]
+    assert [(row[0], row[2]) for row in _runs(db)] == [("shop", "1"), ("shop", "2")]
     assert [(row[0], row[3]) for row in _records(db)] == [("1", {"sku": "a"}), ("2", {"sku": "c"})]
 
 
@@ -101,4 +102,45 @@ def test_nul_characters_postgres_cannot_store_are_replaced(
 
     assert [row[3] for row in _records(db)] == [
         {"sku": "a", "name": "x\ufffdy", "tags": ["\ufffd"]}
+    ]
+
+
+def test_a_run_is_stored_with_its_location(
+    tmp_path: Path, db: psycopg.Connection[tuple[Any, ...]]
+) -> None:
+    run = saved_run(tmp_path, {"product": [{"sku": "a"}]}, location="melb")
+
+    sink = open_sink(DSN or "")
+    sink.prepare()
+    assert export_run(run, [sink])
+
+    run_id = "20260101T000000Z-abc123"
+    assert _runs(db) == [("shop", "melb", run_id, "ok", run_id)]
+
+
+def test_prepare_adds_the_location_column_to_tables_from_before_locations(
+    tmp_path: Path, db: psycopg.Connection[tuple[Any, ...]]
+) -> None:
+    db.execute(
+        "CREATE TABLE scrape_runs (site text NOT NULL, run_id text NOT NULL,"
+        " health text NOT NULL, manifest jsonb NOT NULL,"
+        " exported_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (site, run_id))"
+    )
+    db.execute(
+        "INSERT INTO scrape_runs (site, run_id, health, manifest)"
+        " VALUES ('shop', 'old', 'ok', '{}')"
+    )
+    db.execute(
+        "CREATE TABLE scrape_records (site text NOT NULL, run_id text NOT NULL,"
+        " record_type text NOT NULL, record_key jsonb, data jsonb NOT NULL, meta jsonb NOT NULL,"
+        " FOREIGN KEY (site, run_id) REFERENCES scrape_runs ON DELETE CASCADE)"
+    )
+
+    sink = open_sink(DSN or "")
+    sink.prepare()
+    assert export_run(saved_run(tmp_path, {}, location="melb"), [sink])
+
+    assert [row[:3] for row in _runs(db)] == [
+        ("shop", "melb", "20260101T000000Z-abc123"),
+        ("shop", "default", "old"),
     ]

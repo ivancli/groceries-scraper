@@ -45,6 +45,7 @@ class RecordPipeline:
         meta = {
             "site": self.run.site,
             "run_id": self.run.run_id,
+            "location": self.run.location,
             "record_type": record.record_type,
             "scraped_at": datetime.now(UTC).isoformat(),
             "source_url": item.source_url,

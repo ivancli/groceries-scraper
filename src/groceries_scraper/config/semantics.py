@@ -2,7 +2,7 @@
 
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -39,8 +39,15 @@ def check_site(site: Site) -> Findings:
     incoming = _incoming_variables(site, reachable)
     for name, page_type in site.page_types.items():
         why = _why_unpassed(name, incoming[name]) if name in reachable else None
-        _Checker(findings, f"page_types.{name}", why, session).check(page_type)
+        _Checker(findings, f"page_types.{name}", why, session, site.locations).check(page_type)
     _check_records(site, findings, reachable)
+    if site.session and site.session.pool > len(site.start):
+        # Follow-on requests keep their Start Request's Session.
+        starts = f"{len(site.start)} Start Request{'s' if len(site.start) > 1 else ''}"
+        findings.warnings.append(
+            f"session.pool: {site.session.pool} Sessions but {starts}; "
+            "Sessions without a Start Request stay idle"
+        )
     findings.warnings += [
         f"page_types.{name}: unreachable from any Start Request"
         for name in site.page_types
@@ -68,7 +75,7 @@ def _check_session_setup(site: Site, findings: Findings) -> frozenset[str]:
     setup = site.session.setup if site.session else []
     session: frozenset[str] = frozenset()
     for i, step in enumerate(setup):
-        checker = _Checker(findings, f"session.setup[{i}]", _not_in_setup, session)
+        checker = _Checker(findings, f"session.setup[{i}]", _not_in_setup, session, site.locations)
         checker.request(f"session.setup[{i}].request", step.request, frozenset())
         for name, pipe in step.extract.items():
             checker.pipe(f"session.setup[{i}].extract.{name}", pipe, None, False)
@@ -282,6 +289,7 @@ class _Checker:
     path: str
     why_unavailable: WhyUnavailable | None  # None: unreachable, so no Variables to check
     session: frozenset[str]  # Session Variables set by Session Setup
+    locations: Mapping[str, Mapping[str, Any]]
 
     def check(self, page_type: PageType) -> None:
         page_kind: ValueKind = "JSON" if page_type.response == "json" else "HTML"
@@ -375,20 +383,38 @@ class _Checker:
             self._error(path, f"invalid template: {exc.message}")
             return
         names = meta.find_undeclared_variables(ast) - set(TEMPLATE_NAMES) - local
-        session = {
-            f"session.{key}"
+        scoped = {
+            f"{scope}.{key}"
             for node in ast.find_all((nodes.Getattr, nodes.Getitem))
-            if (key := _session_key(node)) is not None
+            for scope in ("session", "location")
+            if (key := _scoped_key(node, scope)) is not None
         }
-        for name in sorted(names | session):
+        for name in sorted(names | scoped):
             self._variable(path, name)
 
     def _variable(self, path: str, name: str) -> None:
         if name.startswith("session."):
             if name.removeprefix("session.") not in self.session:
                 self._error(path, f"Session Variable `{name}` is not set by Session Setup")
+        elif name.startswith("location."):
+            self._location_variable(path, name)
         elif self.why_unavailable is not None and (reason := self.why_unavailable(name)):
             self._error(path, reason)
+
+    def _location_variable(self, path: str, name: str) -> None:
+        # A Run may pick any Location, so every one must set it.
+        if not self.locations:
+            self._error(
+                path, f"Location Variable `{name}` is not set: the Site declares no Locations"
+            )
+            return
+        key = name.removeprefix("location.")
+        if missing := [
+            location for location, values in self.locations.items() if key not in values
+        ]:
+            plural = "s" if len(missing) > 1 else ""
+            names = ", ".join(f"`{location}`" for location in missing)
+            self._error(path, f"Location Variable `{name}` is not set by Location{plural} {names}")
 
     def _expect(self, path: str, kind: str, wanted: ValueKind, got: ValueKind) -> None:
         if got is not None and got != wanted:
@@ -418,11 +444,11 @@ def _xpath_branches(xpath: str) -> list[str]:
     return [*branches, xpath[start:]]
 
 
-def _session_key(node: nodes.Node) -> str | None:
-    """The key of `session.x` or `session["x"]`; a computed key can't be checked."""
+def _scoped_key(node: nodes.Node, scope: str) -> str | None:
+    """The key of `<scope>.x` or `<scope>["x"]`; a computed key can't be checked."""
     if not (isinstance(node, nodes.Getattr | nodes.Getitem) and isinstance(node.node, nodes.Name)):
         return None
-    if node.node.name != "session":
+    if node.node.name != scope:
         return None
     if isinstance(node, nodes.Getattr):
         return node.attr

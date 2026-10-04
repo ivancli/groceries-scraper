@@ -48,6 +48,14 @@ def _site_or_exit(load: Callable[[], tuple[Site, Findings]]) -> Site:
     return site
 
 
+def _location_or_exit(site: Site, location: str | None) -> str:
+    try:
+        return site.resolve_location(location)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+
+
 def _open_sinks_or_exit(urls: list[str] | None) -> list[Sink]:
     try:
         sinks = [open_sink(url) for url in urls or []]
@@ -90,6 +98,10 @@ def run(
     site_config: Path,
     limit: Annotated[int | None, typer.Option(min=1, help="Stop after N Records.")] = None,
     record: Annotated[str | None, typer.Option(help="all | errors | off")] = None,
+    location: Annotated[
+        str | None,
+        typer.Option(help="The Location to scrape; required when the Site declares any."),
+    ] = None,
     sink: SinkOption = None,
 ) -> None:
     """Run a Site; exits 0 / 1 / 2 for Run Health ok / degraded / failed, 3 if export failed."""
@@ -103,7 +115,7 @@ def run(
         site = site.model_copy(
             update={"settings": site.settings.model_copy(update={"record_level": record})}
         )
-    new_run = create_run(RUNS_DIR, site.site)
+    new_run = create_run(RUNS_DIR, site.site, location=_location_or_exit(site, location))
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
     _report_and_exit(crawl(site, new_run, limit), new_run.path, sinks)
 
@@ -131,7 +143,9 @@ def replay(
     else:
         # The snapshot already holds the defaults the source Run ran with.
         site = _site_or_exit(lambda: checked_site(source.config, {}, str(run_dir)))
-    new_run = create_run(RUNS_DIR, site.site)
+    # The source Run's Captures answer for its Location only.
+    location = _location_or_exit(site, source.run.location)
+    new_run = create_run(RUNS_DIR, site.site, location=location)
     typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
     _report_and_exit(crawl(site, new_run, replay_of=source), new_run.path, sinks)
 

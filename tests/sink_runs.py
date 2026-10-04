@@ -13,6 +13,7 @@ def saved_run(
     *,
     health: str | None = "ok",
     run_id: str = "20260101T000000Z-abc123",
+    location: str | None = None,  # None: a Run from before Locations
 ) -> Path:
     path = root / "shop" / run_id
     (path / "records").mkdir(parents=True)
@@ -21,6 +22,8 @@ def saved_run(
         "run_id": run_id,
         "config": {"site": "shop", "records": KEYED},
     }
+    if location is not None:
+        manifest["location"] = location
     if health is not None:
         manifest["health"] = {"level": health, "breaches": []}
     (path / "run.json").write_text(json.dumps(manifest))

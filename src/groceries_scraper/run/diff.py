@@ -105,6 +105,9 @@ def diff_runs(old_path: Path, new_path: Path, only_field: str | None = None) -> 
     old, new = _load(old_path), _load(new_path)
     if old.site != new.site:
         raise DiffError(f"Runs are of different Sites: {old.site} and {new.site}")
+    if old.location != new.location:
+        # The same Record Key in two Locations is two different facts.
+        raise DiffError(f"Runs are of different Locations: {old.location} and {new.location}")
     record_types, field_seen = [], False
     for record_type in sorted(old.keys.keys() | new.keys.keys()):
         old_key, new_key = old.keys.get(record_type), new.keys.get(record_type)

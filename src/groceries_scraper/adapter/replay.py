@@ -19,6 +19,7 @@ from scrapy.responsetypes import responsetypes
 from groceries_scraper.adapter.fingerprint import request_fingerprint
 from groceries_scraper.adapter.middlewares import PAGE_TYPE, request_metadata
 from groceries_scraper.adapter.settings import RECORDER, REPLAY
+from groceries_scraper.config.models import DEFAULT_LOCATION
 from groceries_scraper.run import Run
 from groceries_scraper.run.directory import read_manifest
 from groceries_scraper.run.recording import RunRecorder
@@ -119,7 +120,8 @@ class SourceRun:
             captures.append((json.loads(meta_path.read_text(encoding="utf-8")), body))
         # File names stop sorting numerically past 9999 Captures.
         captures.sort(key=lambda capture: int(capture[0]["capture_no"]))
-        run = Run(manifest["site"], manifest["run_id"], path)
+        location = manifest.get("location", DEFAULT_LOCATION)
+        run = Run(manifest["site"], manifest["run_id"], path, location)
         return cls(run, config, ReplayIndex(captures, ignore))
 
 

@@ -14,6 +14,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS scrape_runs (
     site text NOT NULL,
     run_id text NOT NULL,
+    location text NOT NULL DEFAULT 'default',
     health text NOT NULL,
     manifest jsonb NOT NULL,
     exported_at timestamptz NOT NULL DEFAULT now(),
@@ -30,6 +31,13 @@ CREATE TABLE IF NOT EXISTS scrape_records (
 );
 CREATE INDEX IF NOT EXISTS scrape_records_by_run ON scrape_records (site, run_id);
 CREATE INDEX IF NOT EXISTS scrape_records_by_key ON scrape_records (site, record_type, record_key);
+ALTER TABLE scrape_runs ADD COLUMN IF NOT EXISTS location text NOT NULL DEFAULT 'default';
+"""
+# Tables from before Locations lack this; their Runs scraped the implicit `default`.
+LOCATION_COLUMN = """
+SELECT 1 FROM information_schema.columns
+WHERE table_name = 'scrape_runs' AND column_name = 'location'
+  AND table_schema = ANY (current_schemas(false))
 """
 SCHEMA_LOCK = 0x5C4A9E  # serialises concurrent first-time schema creation
 
@@ -43,12 +51,13 @@ class PostgresSink:
         return f"postgres://{url.netloc.rpartition('@')[2]}{url.path}"
 
     def prepare(self) -> None:
-        """Creates the tables only when missing, so exports need no DDL rights or locks."""
+        """Changes the schema only when out of date, so exports need no DDL rights or locks."""
         try:
             with psycopg.connect(self.dsn) as connection:
                 tables = "SELECT to_regclass('scrape_runs'), to_regclass('scrape_records')"
                 row = connection.execute(tables).fetchone()
-                if row is None or None in row:
+                current = connection.execute(LOCATION_COLUMN).fetchone() is not None
+                if row is None or None in row or not current:
                     connection.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK,))
                     connection.execute(SCHEMA)
         except psycopg.Error as exc:
@@ -64,8 +73,9 @@ class PostgresSink:
                 "DELETE FROM scrape_runs WHERE site = %s AND run_id = %s", (run.site, run.run_id)
             )
             connection.execute(
-                "INSERT INTO scrape_runs (site, run_id, health, manifest) VALUES (%s, %s, %s, %s)",
-                (run.site, run.run_id, run.health, Jsonb(_storable(run.manifest))),
+                "INSERT INTO scrape_runs (site, run_id, location, health, manifest)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (run.site, run.run_id, run.location, run.health, Jsonb(_storable(run.manifest))),
             )
             with connection.cursor().copy(
                 "COPY scrape_records (site, run_id, record_type, record_key, data, meta) FROM STDIN"

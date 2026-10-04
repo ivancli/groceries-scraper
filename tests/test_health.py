@@ -202,7 +202,35 @@ def test_session_setup_failure_fails_the_run_with_exit_code_2() -> None:
     health = assess_health(site, stats)
 
     assert (health.level, health.exit_code) == ("failed", 2)
-    assert _breaches(site, stats) == ["finish_reason: Session Setup failed"]
+    assert _breaches(site, stats) == [
+        "finish_reason: every Session was lost (Session Setup failed or max_refresh reached)"
+    ]
+
+
+def test_losing_some_sessions_degrades_the_run() -> None:
+    site = _site()
+    stats = _stats(site)
+    stats.sessions = 3
+    stats.add_session_lost()
+
+    assert assess_health(site, stats).level == "degraded"
+    assert _breaches(site, stats) == ["session/lost: 1 of 3 Sessions lost"]
+    assert stats.to_json()["sessions"] == {"pool": 3, "lost": 1}
+    assert "sessions: 1 of 3 lost" in RunOutcome(stats, assess_health(site, stats)).summary()
+
+
+def test_losing_every_session_reports_only_the_failure() -> None:
+    site = _site()
+    stats = _stats(site)
+    stats.sessions = 2
+    stats.add_session_lost()
+    stats.add_session_lost()
+    stats.finish_reason = SESSION_SETUP_FAILED
+
+    assert assess_health(site, stats).level == "failed"
+    assert _breaches(site, stats) == [
+        "finish_reason: every Session was lost (Session Setup failed or max_refresh reached)"
+    ]
 
 
 def test_zero_records_for_a_declared_record_type_fails_the_run() -> None:
@@ -276,6 +304,7 @@ def test_stats_count_pages_records_drops_requests_and_statuses() -> None:
         "null_ratio": {"product": {"price": 0.5, "sku": 0.0}},
         "requests": {"ok": 1, "failed": {"HTTP 404": 1}, "missing": 0},
         "http_status": {"200": 2, "404": 1},
+        "sessions": {"pool": 1, "lost": 0},
     }
 
 
