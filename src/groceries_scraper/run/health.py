@@ -68,7 +68,7 @@ def assess_health(site: Site, stats: RunStats) -> RunHealth:
     )
     # Losing every Session closes the Run, which `_closed_early` already reports.
     if stats.sessions_lost and stats.finish_reason != SESSION_SETUP_FAILED:
-        lost = f"{stats.sessions_lost} of {stats.sessions} Sessions lost"
+        lost = f"{stats.sessions_lost} of {stats.pool_size} Sessions lost"
         breaches.append(Breach("session/lost", lost))
     breaches += [
         Breach(check, f"{value:.3f} > {maximum:.3f}{where}")

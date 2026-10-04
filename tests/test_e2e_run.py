@@ -127,6 +127,11 @@ class _Shop(BaseHTTPRequestHandler):
         if self.server.home_status != 200:
             self.send_error(self.server.home_status)
             return
+        if self.server.home_ok_limit is not None:
+            if self.server.home_ok_limit == 0:
+                self.send_error(404)
+                return
+            self.server.home_ok_limit -= 1
         if self.server.home_failures:
             self.server.home_failures -= 1
             self.send_error(self.server.home_failure_status)
@@ -177,6 +182,7 @@ class _ShopServer(ThreadingHTTPServer):
     home_redirects = False  # `/` → `/home`, as localised homepages often do
     home_failures = 0  # the homepage's first N responses fail with `home_failure_status`
     home_failure_status = 503
+    home_ok_limit: int | None = None  # the homepage 404s after this many responses
     wrap_pagination = False  # the last listing page links back to the first
     render_js = False  # listing pages are a script shell fetching their tiles
     product_responses: dict[str, tuple[int, str]]
@@ -1493,3 +1499,33 @@ def test_each_session_refreshes_on_its_own_budget(tmp_path: Path, shop: _ShopSer
     assert sorted(r["sku"] for r in _records(run_dir)) == sorted(_skus() + _skus("bakery"))
     assert shop.paths.count("/") == 4  # each Session's Setup, then its one refresh
     assert "'session/refreshes': 2" in log
+
+
+def test_a_session_lost_while_refreshing_accounts_for_its_waiting_requests(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    # Both Sessions refresh halfway; the second refresh's Setup fails.
+    shop.csrf, shop.rotate_every, shop.home_ok_limit = True, 6, 3
+
+    run_dir, _ = _pooled(tmp_path, shop, exit_code=1)
+
+    stats = _manifest(run_dir)["stats"]
+    assert stats["sessions"] == {"pool": 2, "lost": 1}
+    assert "Session lost" in stats["requests"]["failed"]
+    # Every page request ends as ok or failed: none vanish while waiting for a refresh.
+    pages = [c for c in _captures(run_dir) if c["page_type"] != "session_setup"]
+    refused = {c["capture_no"] for c in pages if c["response"]["status"] == 419}
+    retries = [c for c in pages if c["parent_capture_no"] in refused]
+    outcomes = stats["requests"]["ok"] + sum(stats["requests"]["failed"].values())
+    assert outcomes == len(pages) - len(retries)
+
+
+def test_replay_of_a_session_pool_reproduces_its_records(tmp_path: Path, shop: _ShopServer) -> None:
+    shop.csrf = True
+    source, _ = _pooled(tmp_path, shop)
+
+    replay, network = _offline(tmp_path, "replay", str(source))
+
+    assert replay is not None and network == ""
+    assert _record_data(replay) == _record_data(source)
+    assert _manifest(replay)["stats"]["requests"]["missing"] == 0

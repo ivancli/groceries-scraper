@@ -21,7 +21,7 @@ class RunStats:
     request_failures: Counter[str] = field(default_factory=Counter)
     requests_missing: int = 0  # Replay requests no Capture matched; never sent
     http_status: Counter[int] = field(default_factory=Counter)  # every Capture
-    sessions: int = 1  # the Session Pool's size
+    pool_size: int = 1
     sessions_lost: int = 0
     duration_seconds: float = 0.0
     finish_reason: str | None = None
@@ -38,7 +38,7 @@ class RunStats:
                 fields.setdefault(page_type.record, {}).update(page_type.fields)
         return cls(
             records=Counter(dict.fromkeys(site.records, 0)),
-            sessions=site.session.pool if site.session else 1,
+            pool_size=site.session.pool if site.session else 1,
             _fields=fields,
         )
 
@@ -103,7 +103,7 @@ class RunStats:
                 "missing": self.requests_missing,
             },
             "http_status": {str(status): n for status, n in sorted(self.http_status.items())},
-            "sessions": {"pool": self.sessions, "lost": self.sessions_lost},
+            "sessions": {"pool": self.pool_size, "lost": self.sessions_lost},
         }
 
 

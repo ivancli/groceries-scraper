@@ -133,3 +133,13 @@ def test_max_refresh_zero_never_refreshes() -> None:
     refresh = SessionRefresh(refresh_on=[419], max_refresh=0)
 
     assert refresh.on_status(419, refresh.generation) is RefreshAction.GIVE_UP
+
+
+def test_a_lost_session_never_waits_for_its_failed_refresh() -> None:
+    refresh = SessionRefresh(refresh_on=[419], max_refresh=2)
+    assert refresh.on_status(419, 0) is RefreshAction.REFRESH
+
+    refresh.lose()  # its Session Setup failed mid-refresh
+
+    assert refresh.on_status(419, 0) is RefreshAction.LOST
+    assert refresh.on_status(200, 0) is RefreshAction.PROCEED

@@ -54,16 +54,17 @@ def _scrapy_request(rendered: RenderedRequest, **kwargs: Any) -> scrapy.Request:
 
 @dataclass(eq=False)
 class _Session:
-    """One Session of the pool: its cookie jar, Session Variables and refresh budget."""
-
     number: int  # 1-based; also names its cookie jar
     refresh: SessionRefresh
     ready: bool  # its first Session Setup has ended
     variables: dict[str, Any] = field(default_factory=dict)
-    lost: bool = False
     # Held until its Session Setup ends: Start Requests once, then retries after each refresh.
     starts: list[FollowRequest] = field(default_factory=list)
     retries: list[FollowRequest] = field(default_factory=list)
+
+    @property
+    def lost(self) -> bool:
+        return self.refresh.lost
 
 
 class SiteSpider(scrapy.Spider):
@@ -93,15 +94,19 @@ class SiteSpider(scrapy.Spider):
         # Round-robin in config order, so Replay assigns Sessions identically.
         for i, start in enumerate(self.site.start):
             follow = FollowRequest(RenderedRequest("GET", start.url), start.page_type, {}, None)
-            session = self._sessions[i % len(self._sessions)]
-            if session.ready:
-                yield self._request(follow, session)
-            else:
-                session.starts.append(follow)
+            if request := self._assign(follow, self._sessions[i % len(self._sessions)]):
+                yield request
         for session in self._sessions:
             if not session.ready:
                 for request in self._setup(session, 0, {}):
                     yield request
+
+    def _assign(self, start: FollowRequest, session: _Session) -> scrapy.Request | None:
+        """A Start Request goes out now, or once the Session's Setup ends."""
+        if session.ready:
+            return self._request(start, session)
+        session.starts.append(start)
+        return None
 
     def _request(
         self, follow: FollowRequest, session: _Session, retry: bool = False
@@ -202,6 +207,8 @@ class SiteSpider(scrapy.Spider):
             session.retries.append(follow)
         elif action is RefreshAction.RETRY:
             yield self._request(follow.with_session(session.variables), session, retry=True)
+        elif action is RefreshAction.LOST:
+            self._stats.add_request_failed("Session lost")
         else:
             self.logger.error(
                 "HTTP %d from %s: max_refresh (%d) reached; dropping the request",
@@ -303,7 +310,7 @@ class SiteSpider(scrapy.Spider):
         """Hands its unstarted Start Requests to the remaining Sessions; none left ends the Run."""
         if session.lost:
             return
-        session.lost = True
+        session.refresh.lose()
         self.logger.error("Session %d lost: %s", session.number, reason)
         self._inc_stat("session/lost")
         self._stats.add_session_lost()
@@ -316,11 +323,8 @@ class SiteSpider(scrapy.Spider):
             raise CloseSpider(SESSION_SETUP_FAILED)
         starts, session.starts = session.starts, []
         for i, follow in enumerate(starts):
-            heir = remaining[i % len(remaining)]
-            if heir.ready:
-                yield self._request(follow, heir)
-            else:
-                heir.starts.append(follow)
+            if request := self._assign(follow, remaining[i % len(remaining)]):
+                yield request
 
     def _inc_stat(self, key: str) -> None:
         assert self.crawler.stats is not None

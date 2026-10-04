@@ -210,7 +210,7 @@ def test_session_setup_failure_fails_the_run_with_exit_code_2() -> None:
 def test_losing_some_sessions_degrades_the_run() -> None:
     site = _site()
     stats = _stats(site)
-    stats.sessions = 3
+    stats.pool_size = 3
     stats.add_session_lost()
 
     assert assess_health(site, stats).level == "degraded"
@@ -222,7 +222,7 @@ def test_losing_some_sessions_degrades_the_run() -> None:
 def test_losing_every_session_reports_only_the_failure() -> None:
     site = _site()
     stats = _stats(site)
-    stats.sessions = 2
+    stats.pool_size = 2
     stats.add_session_lost()
     stats.add_session_lost()
     stats.finish_reason = SESSION_SETUP_FAILED

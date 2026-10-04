@@ -8,6 +8,7 @@ from scrapy import Request
 from scrapy.http import HtmlResponse
 
 from groceries_scraper.adapter.fingerprint import request_fingerprint
+from groceries_scraper.adapter.middlewares import SESSION_NO
 from groceries_scraper.adapter.replay import ReplayError, ReplayIndex, SourceRun
 from groceries_scraper.run import Run
 
@@ -187,3 +188,19 @@ def test_a_damaged_source_run_is_rejected(tmp_path: Path, damage: str) -> None:
 
     with pytest.raises(ReplayError):
         SourceRun.load(run_dir)
+
+
+def test_session_setup_captures_are_served_to_their_own_session() -> None:
+    home = Request("https://shop.example/")
+    index = ReplayIndex(
+        [
+            ({**_meta(home), "session_no": 2}, b"two"),
+            ({**_meta(home), "session_no": 1}, b"one"),
+        ],
+        frozenset(),
+    )
+
+    first = index.serve(Request(home.url, meta={SESSION_NO: 1}))
+    second = index.serve(Request(home.url, meta={SESSION_NO: 2}))
+
+    assert (first and first.body, second and second.body) == (b"one", b"two")
