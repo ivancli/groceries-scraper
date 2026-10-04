@@ -33,15 +33,9 @@ settings:                      # allowlisted overrides of defaults.yaml
   record_level: all            # all | errors | off
   redact_headers: [X-CSRF-Token, X-Key]  # in addition to the built-in sensitive headers
 
-locations:                     # optional; each Run scrapes one (`--location`)
-  melb_cbd: {postcode: "3000"}
-  sydney_cbd: {postcode: "2000"}
-
-session:                       # Session Setup — runs before Start Requests, once per Session
-  pool: 1                      # interchangeable Sessions per Run (see Session Pool)
+session:                       # Session Setup — runs before Start Requests
   setup:
     - request: {url: "https://shop.example/"}
-    - request: {method: POST, url: "https://shop.example/api/set-postcode", json: {postcode: "{{ location.postcode }}"}}
       extract:
         csrf: {css: "meta[name=csrf-token]::attr(content)"}
   refresh_on: [403, 419]
@@ -130,13 +124,13 @@ page_types:
 | `regex: pattern` | group 1 if present, else full match |
 | `replace: [old, new]`, `strip`, `split: sep`, `join: sep`, `lower`, `upper` | text |
 | `urljoin` | resolve against response URL |
-| `template: "{{ ... }}"` | sandboxed Jinja; `value`, Variables, `session`, `location`, `env` in scope |
+| `template: "{{ ... }}"` | sandboxed Jinja; `value`, Variables, `session`, `env` in scope |
 | `fn: "module:callable"` | escape hatch, `(value, ctx) -> value` |
 
 A single step mapping is shorthand for a one-step Pipe. Trace records the value after every step.
 
 ### Variables & templating
-- Scopes: `session.*` (Session Setup, per Session), `location.*` (the Run's Location, fixed for the Run), bare names (passed along the chain by `pass:`), `env.*` (environment; secrets never live in YAML).
+- Scopes: `session.*` (Session Setup), bare names (passed along the chain by `pass:`), `env.*` (environment; secrets never live in YAML).
 - Templates: `jinja2.sandbox.SandboxedEnvironment`, `StrictUndefined`.
 - In a `json` request body, a value that is exactly one `{{ expr }}` keeps the expression's type (`"{{ page }}"` → `2`; `"{{ text | int }}"` for scraped text); anything else renders to a string.
 
@@ -156,30 +150,11 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   it like any Capture, without a browser.
 - Setup: `uv run playwright install chromium` (CI installs it too).
 
-### Locations
-- `locations:` maps a name to that Location's Variables, read as `location.*`. A Site without
-  it has one implicit Location, `default`, with no Variables.
-- `scrape run --location <name>` picks the Run's Location; it is required when the Site
-  declares any, and an unknown name is an error listing the declared ones. Running every
-  Location means one Run each, left to the scheduler.
-- The Location is stored in `run.json` and every Record's `_meta.location`. Replay reuses the
-  source Run's Location.
-
-### Session Pool
-- `session.pool` (default 1) Sessions per Run, each with its own cookie jar (Scrapy's
-  `cookiejar` meta key) and Session Variables. Session Setup runs once per Session.
-- Start Requests are assigned to Sessions round-robin in config order, so Replay assigns
-  them identically; every request followed from a Start Request uses its Session.
-- Setup steps run in order before that Session's Start Requests; each sees the Session Variables extracted before it. A step's response is read as JSON if its content type says so, else HTML.
-- On a status in `refresh_on`: re-run that Session's Setup, retry the request (its Request Template re-rendered with the new Session Variables), up to `max_refresh` per Session. Requests of that Session failing meanwhile wait for the refresh rather than starting another; `refresh_on` statuses are never retried with the stale Session. Past the limit, such requests are dropped and counted (`session/refresh_exhausted`).
-- Session Setup failure (non-2xx, network error, or an `extract` with no value) or an
-  exhausted refresh budget loses that Session: its unstarted Start Requests move to the
-  remaining Sessions and the Run is at best `degraded` (`session/lost`). Losing every
-  Session closes the Run with reason `session_setup_failed` → Run Health `failed`.
-- `download_delay` and `concurrent_requests_per_domain` apply to the whole Site, not per
-  Session: the pool spreads cookie identities, not request rate.
-- Session Setup Captures are named `session_setup` with the Session number when the pool
-  has more than one Session.
+### Session (v1)
+- One Session per Site Run; cookies via Scrapy cookie middleware.
+- Setup steps run in order before Start Requests; each sees the Session Variables extracted before it. A step's response is read as JSON if its content type says so, else HTML.
+- On a status in `refresh_on`: re-run Session Setup, retry the request (its Request Template re-rendered with the new Session Variables), up to `max_refresh` per Run. Requests failing meanwhile wait for the refresh rather than starting another; `refresh_on` statuses are never retried with the stale Session. Past the limit, such requests are dropped and counted (`session/refresh_exhausted`).
+- Session Setup failure (non-2xx, network error, or an `extract` with no value) → Run closes with reason `session_setup_failed` → Run Health `failed`.
 
 ### Record Keys
 - Within a Run, a Record whose Record Key matches an earlier Record of its Record Type is
@@ -223,7 +198,7 @@ runs/<site>/<run_id>/
   captures/0001-listing.meta.json   # request (redacted), response meta, parent capture, page type, variables
   captures/0001-listing.body        # raw body
   traces/0001-listing.trace.json    # per-field / per-follow-rule step values + errors
-  records/product.jsonl        # each record has _meta: site, location, run_id, record_type, scraped_at, source_url, capture_no
+  records/product.jsonl        # each record has _meta: site, run_id, record_type, scraped_at, source_url, capture_no
 ```
 
 - Redacted by default: `Cookie`, `Set-Cookie`, `Authorization`, plus Site-configured headers.
@@ -318,7 +293,7 @@ For installation and a runnable retailer example, see the [quickstart](../README
 
 ```
 scrape validate sites/<site>.yaml
-scrape run sites/<site>.yaml [--location NAME] [--limit N] [--record all|errors|off] [--sink URL ...]
+scrape run sites/<site>.yaml [--limit N] [--record all|errors|off] [--sink URL ...]
 scrape replay runs/<site>/<run_id> [--config edited.yaml] [--sink URL ...]
 scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
@@ -326,7 +301,7 @@ scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
 scrape export runs/<site>/<run_id> --sink URL [--sink URL ...] [--force]
 ```
 
-`diff` compares two Runs of one Site and Location (different Locations are an error), per Record Type with a Record Key in either Run's
+`diff` compares two Runs of one Site, per Record Type with a Record Key in either Run's
 `run.json` config (a key that differs between them is an error). It lists
 Records added, removed and changed, each change with its top-level Fields' old and new
 values (an absent Field compares as `null`); `--field` narrows changes to one Field, and
@@ -365,12 +340,50 @@ Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink f
 `run`/`replay` keep their Run Health code unless a Sink fails (3).
 
 - `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's
-  `scrape_runs` row (site, location, run_id, health, manifest) and its `scrape_records` rows
+  `scrape_runs` row (site, run_id, health, manifest) and its `scrape_records` rows
   (record_type, record_key, data without `_meta`, meta). Tables are created before the
   first export if missing. NUL characters, which jsonb rejects, become U+FFFD.
 - `s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`): mirrors `run.json` and
-  `records/*.jsonl` to `<prefix>/<site>/<location>/<run_id>/`, removing objects the Run no longer
+  `records/*.jsonl` to `<prefix>/<site>/<run_id>/`, removing objects the Run no longer
   has; `run.json` is uploaded last as the completion marker.
+
+## Planned: Locations and Session Pools (#19)
+
+Not implemented yet; replaces "Session (v1)" once built. See ADR-0002.
+
+```yaml
+locations:                     # optional; each Run scrapes one (`--location`)
+  melb_cbd: {postcode: "3000"}
+  sydney_cbd: {postcode: "2000"}
+
+session:
+  pool: 3                      # interchangeable Sessions per Run (default 1)
+  setup:
+    - request: {url: "https://shop.example/"}
+    - request: {method: POST, url: "https://shop.example/api/set-postcode", json: {postcode: "{{ location.postcode }}"}}
+```
+
+### Locations
+- `locations:` maps a name to that Location's Variables, read as `location.*` (fixed for the
+  Run). A Site without it has one implicit Location, `default`, with no Variables.
+- `scrape run --location <name>` picks the Run's Location; it is required when the Site
+  declares any, and an unknown name is an error listing the declared ones. Running every
+  Location means one Run each, left to the scheduler.
+- The Location is stored in `run.json`, every Record's `_meta.location`, the Postgres
+  `scrape_runs.location` column and S3 paths (`<prefix>/<site>/<location>/<run_id>/`).
+  Replay reuses the source Run's Location; `diff` rejects Runs of different Locations.
+
+### Session Pool
+- `session.pool` Sessions per Run, each with its own cookie jar (Scrapy's `cookiejar` meta
+  key) and Session Variables. Session Setup runs once per Session; `max_refresh` is per Session.
+- Start Requests are assigned to Sessions round-robin in config order, so Replay assigns
+  them identically; every request followed from a Start Request uses its Session.
+- A Session whose Setup fails or whose refresh budget runs out is lost: its unstarted Start
+  Requests move to the remaining Sessions and the Run is at best `degraded` (`session/lost`).
+  Losing every Session closes the Run with `session_setup_failed` → `failed`.
+- `download_delay` and `concurrent_requests_per_domain` stay per Site: the pool spreads
+  cookie identities, not request rate.
+- Session Setup Captures carry the Session number when the pool has more than one Session.
 
 ## Deferred (post-v1)
 Browser waits beyond network idle (e.g. for a selector) · a proxy per Session · price history across many Runs · nightly live smoke runs.
