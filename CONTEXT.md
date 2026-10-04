@@ -124,6 +124,10 @@ _Avoid_: Re-run, offline mode, cache mode
 A destination outside the **Run** directory (Postgres, S3) that a finished **Run**'s **Records** are exported to.
 _Avoid_: Output, exporter, destination
 
+**Archive**:
+A copy of a finished **Run**'s whole directory (including **Captures** and **Extraction Traces**) in object storage, kept so the **Run** can be inspected or replayed after the machine that ran it is gone.
+_Avoid_: Backup, Sink, upload
+
 ## Relationships
 
 - A **Site** has one or more **Start Requests** and one or more **Page Types**
@@ -151,6 +155,7 @@ _Avoid_: Output, exporter, destination
 - Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**, only when both scrape the same **Location**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
 - A **Run** is exported to zero or more **Sinks** after it finishes; a `failed` **Run** only when forced, and re-exporting replaces the **Sink**'s earlier copy
+- A **Run** has at most one **Archive**, made after it finishes whatever its **Run Health**
 
 ## Example dialogue
 
