@@ -496,7 +496,8 @@ def test_page_type_field_type_must_match_the_contract() -> None:
     assert errors == [
         "page_types.pdp.fields.price: type `string`, but Record Type `product`'s contract "
         "says `number`",
-        "page_types.pdp.fields.name: no type, but Record Type `product`'s contract says `string`",
+        "page_types.pdp.fields.name: no type; add `type: string` to match Record Type "
+        "`product`'s contract",
     ]
 
 
@@ -539,8 +540,8 @@ def test_nested_fields_are_checked_against_the_contract() -> None:
         "contract says `integer`",
         "page_types.pdp.fields.images.items: type `string`, but Record Type `product`'s "
         "contract says `integer`",
-        "page_types.pdp.fields.variants.fields.size: no type, but Record Type `product`'s "
-        "contract says `string`",
+        "page_types.pdp.fields.variants.fields.size: no type; add `type: string` to match "
+        "Record Type `product`'s contract",
         "page_types.pdp.fields.tags: array of scalars (`items`), but Record Type `product`'s "
         "contract says array of objects (`fields`)",
     ]
@@ -556,6 +557,8 @@ def test_every_reachable_emitter_is_checked_but_unreachable_ones_are_not() -> No
     errors = _errors(page_types, records={"product": {"fields": contract}})
 
     assert errors == [
-        "page_types.api.fields.sku: no type, but Record Type `product`'s contract says `string`",
-        "page_types.pdp.fields.sku: no type, but Record Type `product`'s contract says `string`",
+        "page_types.api.fields.sku: no type; add `type: string` to match Record Type "
+        "`product`'s contract",
+        "page_types.pdp.fields.sku: no type; add `type: string` to match Record Type "
+        "`product`'s contract",
     ]

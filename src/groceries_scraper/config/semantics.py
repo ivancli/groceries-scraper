@@ -120,7 +120,7 @@ def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
 
 @dataclass
 class _Contract:
-    """Checks a Page Type's Fields against its Record Type's Record Contract: closed and exact."""
+    """Checks a Page Type's Fields against its Record Type's Record Contract."""
 
     findings: Findings
     record_type: str
@@ -138,9 +138,15 @@ class _Contract:
                 self._error(f"{prefix}.{name}", f"not in {self._label}'s contract")
 
     def _field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
+        if spec.type is None:
+            # Untyped Fields skip Coercion, so nothing would enforce the contract's type.
+            fix = f"add `type: {wanted.type}` to match {self._label}'s contract"
+            self._error(path, f"no type; {fix}")
+            return
         if spec.type != wanted.type:
-            got = f"type `{spec.type}`" if spec.type else "no type"
-            self._error(path, f"{got}, but {self._label}'s contract says `{wanted.type}`")
+            self._error(
+                path, f"type `{spec.type}`, but {self._label}'s contract says `{wanted.type}`"
+            )
             return  # nested Fields of a different type would only add noise
         # A stricter emitter is fine: optional in the contract only allows nulls.
         if wanted.required and not spec.required:
