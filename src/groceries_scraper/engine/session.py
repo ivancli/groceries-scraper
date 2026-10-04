@@ -48,6 +48,7 @@ class RefreshAction(Enum):
     WAIT = "wait"  # Setup is already re-running: retry once it ends
     RETRY = "retry"  # sent with an older Session: retry with the current one
     GIVE_UP = "give_up"
+    LOST = "lost"  # the Session is gone: drop the request
 
 
 class SessionRefresh:
@@ -59,10 +60,13 @@ class SessionRefresh:
         self.generation = 0
         self.refreshes = 0
         self.refreshing = False
+        self.lost = False
 
     def on_status(self, status: int, generation: int) -> RefreshAction:
         if status not in self.refresh_on:
             return RefreshAction.PROCEED
+        if self.lost:
+            return RefreshAction.LOST
         if self.refreshing:
             return RefreshAction.WAIT
         if generation < self.generation:
@@ -72,6 +76,11 @@ class SessionRefresh:
         self.refreshes += 1
         self.refreshing = True
         return RefreshAction.REFRESH
+
+    def lose(self) -> None:
+        # A refresh that failed will never end; nothing may wait for it.
+        self.lost = True
+        self.refreshing = False
 
     def refreshed(self) -> None:
         self.generation += 1

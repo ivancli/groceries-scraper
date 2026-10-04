@@ -185,8 +185,10 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - A Session is lost when its Setup fails (non-2xx, network error, or an `extract` with no
   value) or its refresh budget runs out. Its Start Requests not yet sent move to the
   remaining Sessions; requests waiting for its refresh are dropped (`Session lost`). The
-  Run is at best `degraded` (`session/lost`). Losing every Session closes the Run with
-  reason `session_setup_failed` → Run Health `failed`.
+  Run is at best `degraded` (`session/lost`); requests already sent with it run on, and
+  any later refused ones are dropped (`Session lost`). Losing every Session closes the Run
+  with reason `session_setup_failed` → Run Health `failed` — with the default single
+  Session, so does running out of `max_refresh`.
 - `download_delay` and `concurrent_requests_per_domain` stay per Site: the pool spreads
   cookie identities, not request rate.
 
@@ -292,7 +294,8 @@ runs/<site>/<run_id>/
   a redacted legacy URL cannot safely reconstruct a fingerprint and must be rejected.
 - Replay serves responses from a prior Run's Captures; unmatched requests are recorded as `missing`, never fetched.
   Requests sharing a fingerprint (retries, Session refreshes) get its Captures in Capture
-  order, then the last one again. Served responses use the request's URL and drop
+  order, then the last one again; Session Setup requests only those of their own Session.
+  Served responses use the request's URL and drop
   `[REDACTED]` header values. robots.txt is not consulted and there is no download delay.
 - The source Run must have `record_level: all`. Without `--config`, its config snapshot is
   replayed (redacted header templates send `[REDACTED]`; headers never affect matching).

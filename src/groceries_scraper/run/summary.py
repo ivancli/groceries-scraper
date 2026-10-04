@@ -34,7 +34,7 @@ class RunOutcome:
                 requests,
                 f"http: {_counts(stats['http_status'], ': ')}",
                 *(
-                    [f"sessions: {self.stats.sessions_lost} of {self.stats.sessions} lost"]
+                    [f"sessions: {self.stats.sessions_lost} of {self.stats.pool_size} lost"]
                     if self.stats.sessions_lost
                     else []
                 ),

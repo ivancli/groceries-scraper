@@ -211,7 +211,7 @@ TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/postgres uv run pyt
 docker compose down
 ```
 
-A proxy per Session, price history across many Runs, schema contracts, and scheduled live checks are deferred.
+A proxy per Session, price history across many Runs, and scheduled live checks are deferred.
 Use HTML or JSON endpoints for now. Offline fixtures detect changes to extraction
 code and configs; they do not detect changes to the live website.
 

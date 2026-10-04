@@ -17,7 +17,7 @@ from scrapy.http.headers import Headers
 from scrapy.responsetypes import responsetypes
 
 from groceries_scraper.adapter.fingerprint import request_fingerprint
-from groceries_scraper.adapter.middlewares import PAGE_TYPE, request_metadata
+from groceries_scraper.adapter.middlewares import PAGE_TYPE, SESSION_NO, request_metadata
 from groceries_scraper.adapter.settings import RECORDER, REPLAY
 from groceries_scraper.config.models import DEFAULT_LOCATION
 from groceries_scraper.run import Run
@@ -45,7 +45,13 @@ class ReplayIndex:
         self.ignore_params = ignore_params
         self._captures: dict[str, deque[tuple[dict[str, Any], Body]]] = {}
         for meta, body in captures:
-            self._captures.setdefault(self._fingerprint(meta), deque()).append((meta, body))
+            key = self._key(self._fingerprint(meta), meta.get("session_no"))
+            self._captures.setdefault(key, deque()).append((meta, body))
+
+    @staticmethod
+    def _key(fingerprint: str, session_no: int | None) -> str:
+        # Each Session's identical Setup requests get that Session's own responses.
+        return fingerprint if session_no is None else f"{fingerprint}#{session_no}"
 
     def _fingerprint(self, meta: dict[str, Any]) -> str:
         request = meta["request"]
@@ -64,7 +70,8 @@ class ReplayIndex:
         return request_fingerprint(original, self.ignore_params)
 
     def serve(self, request: Request) -> Response | None:
-        queue = self._captures.get(request_fingerprint(request, self.ignore_params))
+        fingerprint = request_fingerprint(request, self.ignore_params)
+        queue = self._captures.get(self._key(fingerprint, request.meta.get(SESSION_NO)))
         if not queue:
             return None
         meta, source = queue.popleft() if len(queue) > 1 else queue[0]
