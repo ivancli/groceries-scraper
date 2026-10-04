@@ -74,16 +74,24 @@ _Avoid_: Casting, parsing
 
 ### Session and state
 
+**Location**:
+A named store or postcode context, declared on a **Site**, under which a **Run** scrapes; it changes what data the **Site** returns.
+_Avoid_: Locale, store, region, variant
+
 **Session**:
-The single shared HTTP identity (cookies + session **Variables**) used for one **Site** run.
+One HTTP identity (cookies + session **Variables**) within a **Run**; it never changes what data is returned.
 _Avoid_: Auth, login, context
+
+**Session Pool**:
+The interchangeable **Sessions** a **Run** spreads its crawl across.
+_Avoid_: Workers, identity pool
 
 **Session Setup**:
 The ordered requests run once before **Start Requests** (and again on refresh) to establish the **Session**, e.g. fetching a CSRF token.
 _Avoid_: Bootstrap, pre-flight, auth step
 
 **Variable**:
-A named value available to templates — either session-scoped (`session.*`) or carried along a crawl chain by a **Follow Rule**.
+A named value available to templates — session-scoped (`session.*`), location-scoped (`location.*`, fixed for the **Run**), or carried along a crawl chain by a **Follow Rule**.
 _Avoid_: Param, context value, meta
 
 ### Runs and debugging
@@ -122,7 +130,10 @@ _Avoid_: Output, exporter, destination
 - A **Start Request** is handled by exactly one **Page Type**
 - A **Page Type** has zero or more **Follow Rules**; each **Follow Rule** targets exactly one **Page Type** (may be itself, for pagination)
 - A **Follow Rule** issues requests via a **Request Template** (default: GET the selected URL)
-- A **Site** has at most one **Session** per run (v1); **Session Setup** populates its session **Variables**
+- A **Site** declares zero or more **Locations**; a **Site** without any has one implicit **Location**, `default`
+- A **Run** scrapes exactly one **Location**
+- A **Run** has one **Session Pool** of one or more **Sessions**; each **Session** runs its own **Session Setup**, which populates its session **Variables**
+- A **Start Request** is assigned to one **Session**; every request followed from it uses that same **Session**
 - A **Page Type** emits zero or more **Records** — one per **Loop** match, or exactly one if it has no page-level **Loop**
 - A **Record** has one or more **Fields**; a **Field** of type object or array may contain nested **Fields**
 - Every **Selector** is evaluated relative to its **Scope**; absolute XPath inside a **Loop** is rejected unless explicitly marked absolute
@@ -133,9 +144,11 @@ _Avoid_: Output, exporter, destination
 - A **Record** missing a required **Field** is dropped and the reason recorded in the **Extraction Trace**
 - A **Run** has many **Captures**; each **Capture** has one **Extraction Trace** and at most one parent **Capture**
 - A **Run** has exactly one **Run Health**, derived from the **Site**'s **Health Checks** plus built-in failure conditions
+- A **Run** that loses some of its **Sessions** hands their unstarted **Start Requests** to the rest and is at best `degraded`; losing all of them makes it `failed`
 - A **Record Type** has at most one **Record Contract**; with one, every emitting **Page Type** declares exactly its **Fields**
+- A **Record** belongs to its **Run**'s **Location**; the same **Record Key** in two **Locations** identifies two different facts
 - A **Record Type** has at most one **Record Key**; within a **Run** only the first **Record** per key is kept
-- Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**
+- Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**, only when both scrape the same **Location**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
 - A **Run** is exported to zero or more **Sinks** after it finishes; a `failed` **Run** only when forced, and re-exporting replaces the **Sink**'s earlier copy
 
@@ -149,4 +162,5 @@ _Avoid_: Output, exporter, destination
 ## Flagged ambiguities
 
 - "item" collides with Scrapy's `Item` and the `items:` config key — resolved: an emitted output object is a **Record**.
+- "session" was used both for a store/postcode selection and for a parallel identity — resolved: the selection is a **Location** (per **Run**); identities are **Sessions** in a **Session Pool**.
 - "target" was used for both the whole website and individual URLs — resolved: the website is a **Site**; entry URLs are **Start Requests**.
