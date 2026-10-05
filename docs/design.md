@@ -392,7 +392,40 @@ scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/
 scrape diff runs/<site>/<old_id> runs/<site>/<new_id> [--field name] [--json]
 scrape export runs/<site>/<run_id> --sink URL [--sink URL ...] [--force]
+scrape deploy job sites/<site>.yaml [--location NAME] [--sink URL ...] [--archive URL]
 ```
+
+`deploy job` reads exactly one `batch/v1` Job template on stdin and writes the rendered
+Job on stdout, without contacting the cluster or the Sinks. Validation messages go to
+stderr. Kustomize owns image, storage, ServiceAccount, failure policy and other cluster
+settings; the renderer supplies the Site and Location details ([ADR-0003](adr/0003-kubernetes-jobs-with-archives.md)):
+
+```sh
+kubectl kustomize deploy/k8s/overlays/local \
+  | scrape deploy job sites/aldi.yaml --location north \
+  | kubectl create -f -
+```
+
+It removes the template's `metadata.name`, sets `generateName: scrape-<site>-<location>-`
+with lowercase DNS-safe names (`_` becomes `-`), and truncates the prefix to 58 characters
+including its trailing dash, leaving room for Kubernetes' five-character suffix.
+The Job and pod template get `groceries-scraper/site` and `groceries-scraper/location`
+labels with the exact names. Names that cannot fit a Kubernetes label (at most 63
+characters, alphanumeric at both ends) are rejected rather than changing these labels.
+Location selection follows `run`: declared Locations require `--location`, and a Site
+without any uses `default`.
+
+The first container is the scraper. Its existing args are retained, followed by
+`run <site config> --location <name>` and any repeated `--sink` and `--archive` options.
+It gains an optional `envFrom` reference to `scrape-site-<site>` (the Site name sanitised
+as above), alongside template Secrets, and `SCRAPE_JOB_NAME` from the Downward API's
+`metadata.labels['batch.kubernetes.io/job-name']`. Sink URLs containing a password,
+including those in template args, are rejected with a message pointing to `PGPASSWORD`.
+
+Any Page Type with `render: browser` gives the scraper an in-memory `emptyDir` mounted
+at `/dev/shm` and memory requests of `1Gi` / limit of `2Gi`, preserving CPU settings.
+HTTP-only Sites keep the template's resources and volumes. Sidecars are preserved.
+Use `kubectl create`, since each rendered Job needs a fresh generated name.
 
 `diff` compares two Runs of one Site and Location, per Record Type with a Record Key in either Run's
 `run.json` config (a key that differs between them is an error). It lists
