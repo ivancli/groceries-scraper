@@ -42,6 +42,35 @@ ArchiveOption = Annotated[
 app = typer.Typer(no_args_is_help=True, help="Config-driven groceries scraper.")
 fixture_app = typer.Typer(no_args_is_help=True, help="Manage Golden Fixtures.")
 app.add_typer(fixture_app, name="fixture")
+deploy_app = typer.Typer(no_args_is_help=True, help="Render Kubernetes Jobs.")
+app.add_typer(deploy_app, name="deploy")
+
+
+@deploy_app.command("job")
+def deploy_job(
+    site_config: Path,
+    location: Annotated[str | None, typer.Option(help="The Location this Run scrapes.")] = None,
+    sink: SinkOption = None,
+    archive_url: ArchiveOption = None,
+) -> None:
+    """Read one Job template on stdin and write the Job for this Run on stdout."""
+    from groceries_scraper.deploy import render_job
+
+    site = _load_site_or_exit(site_config)
+    location_name = _location_or_exit(site, location)
+    try:
+        rendered = render_job(
+            typer.get_text_stream("stdin").read(),
+            site,
+            site_config,
+            location_name,
+            sink or [],
+            archive_url,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(rendered, nl=False)
 
 
 @app.command()

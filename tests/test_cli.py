@@ -18,11 +18,11 @@ def _design_example() -> str:
     return match.group(1)
 
 
-def test_help_lists_the_seven_commands() -> None:
+def test_help_lists_the_commands() -> None:
     result = CliRunner().invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    for command in ("validate", "run", "replay", "inspect", "fixture", "diff", "export"):
+    for command in ("validate", "run", "replay", "inspect", "fixture", "diff", "export", "deploy"):
         assert command in result.output
 
 
