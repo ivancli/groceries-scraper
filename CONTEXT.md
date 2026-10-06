@@ -145,6 +145,10 @@ _Avoid_: Targets, route, matcher
 The result reported for one **Supplied Start Request** — `ok`, `failed`, `blocked`, `not_found` or `skipped` — so a missing **Record** is never mistaken for a missing product.
 _Avoid_: Status, result
 
+**Price Record contract**:
+The **Fields** every **Record** of an **Accepts Rule**'s **Page Type** must declare so the **Dispatcher** can read it — `url`, `name` and `price` in dollars, plus optional price facts; unlike a **Record Contract** it allows other **Fields**.
+_Avoid_: Price schema, tracker schema
+
 **Schedule**:
 A **Site**'s minimum interval between checks of the same **Supplied Start Request**, bounded by a global minimum.
 _Avoid_: Cron, frequency config

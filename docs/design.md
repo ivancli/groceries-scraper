@@ -214,7 +214,7 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   Request's Page Type, and gets no Variables.
 - A Site has `accepts` exactly when it has a `schedule`. `every` is a whole number of `s`,
   `m`, `h` or `d`, at least `defaults.yaml` `schedule.min_every` (15m); the Dispatcher
-  checks each supplied product no more often than that.
+  checks each Watch List entry no more often than that.
 - The accepted Page Type's Records must match the **Price Record contract**, which the
   Dispatcher reads: `url`, `name` (string) and `price` (number, dollars) declared with
   `required: true`; optionally `brand`, `size`, `unit_basis`, `unit_price_text`,

@@ -119,7 +119,7 @@ def _site_or_exit(load: Callable[[], tuple[Site, Findings]]) -> Site:
 
 
 def _reported_site(load: Callable[[], tuple[Site, Findings]]) -> Site | None:
-    """Prints the findings; None when the Site is invalid."""
+    """Prints the findings, so a directory can report every invalid Site."""
     try:
         site, findings = load()
     except ConfigError as exc:
