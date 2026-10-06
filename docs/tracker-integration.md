@@ -115,6 +115,37 @@ Its walnut week has three checks per day, prices $5.49 → $4.49 → $4.99 → $
 and one failed check followed by recovery: 21 checks, 20 Price Observations,
 four changes, two health transitions and seven heartbeats.
 
+**Collector client (#60).** `groceries_scraper.dispatch.collector.CollectorClient`
+takes the tracker origin URL and a prepared `DispatchStore`. It reads
+`CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` from the environment and sends
+them as the Cloudflare Access service-token headers. Responses and network error
+details are never included in logs, and HTTP redirects are refused.
+
+- `deliver_changes(dry_run=False)` drains the outbox oldest first, at most 100
+  items per POST, and returns the count finalised. Both `acked` and `rejected`
+  items get `sent_at`; rejected reasons are kept in `last_error`.
+  Failed requests leave items pending, increment `attempts` and set
+  `next_attempt_at`: 60 seconds, doubling per failure, capped at one hour.
+  Backoff on an earlier batch stops later batches overtaking it. HTTP 400 stops
+  the tick with a critical log. Invalid acknowledgements finalise nothing.
+- `deliver_changes(dry_run=True)` posts every pending batch with `?dry_run=1`,
+  returns zero and leaves all delivery state unchanged, including on failure.
+  The `--dry-run` flag on `scrape dispatch` (#61) will pass this option through.
+- `refresh_watch_list()` atomically replaces the cached entries and ETag after a
+  valid response. HTTP 304 changes nothing. `store.watch_list()` reads the cache.
+- `publish_site_catalogue(Path("sites"))` publishes only Sites with Accepts Rules
+  and Schedules, including disabled Sites. Location Variables stay local; only
+  names and labels are sent. Missing labels fall back to the Location name, and
+  a Site without Locations publishes `default` with `store_specific: false`.
+  The hash covers only the public catalogue and is saved after a successful PUT.
+
+The Watch List ETag (including for an empty list) and catalogue hash live in
+`dispatch.collector_state`; retry times live on the outbox. They survive fresh
+CronJob processes. `DispatchStore.prepare()` upgrades an existing store without
+discarding its history. `tests/test_collector.py` uses a fake HTTP tracker and
+disposable Postgres (`TEST_DATABASE_URL`), including the 250-item interrupted
+delivery and recovery scenario.
+
 **Due rule.** An entry is due when nothing is in flight for its ref and either:
 - `check_soon` is set and at least `min_every` has passed since its last attempt, or
 - `every` has passed since its last success.
