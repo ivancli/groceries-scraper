@@ -9,7 +9,6 @@ spec:
   backoffLimit: 2
   activeDeadlineSeconds: 14400  # 4 hours
   ttlSecondsAfterFinished: 604800  # 7 days, to read the logs of a failed Run
-  # Only pod failures the Run didn't cause are retried.
   podFailurePolicy:
     rules:
       - action: Ignore  # eviction, preemption, node drain: not the Run's fault, not a retry

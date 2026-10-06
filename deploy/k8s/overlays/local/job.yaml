@@ -21,7 +21,7 @@ spec:
               readOnly: true
       volumes:
         - name: runs
-          emptyDir: null
+          emptyDir: null  # a volume with two sources is rejected
           hostPath:
             path: /mnt/groceries-scraper/runs
             type: Directory
