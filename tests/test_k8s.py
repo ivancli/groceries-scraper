@@ -1,3 +1,4 @@
+import base64
 import shutil
 import subprocess
 from pathlib import Path
@@ -93,3 +94,47 @@ def test_local_overlay_renders_through_deploy_job(monkeypatch: pytest.MonkeyPatc
     (container,) = job["spec"]["template"]["spec"]["containers"]
     assert container["args"] == ["run", "sites/aldi.yaml", "--location", "default"]
     assert "--archive" not in container["args"]
+
+
+@pytest.fixture(scope="module")
+def local_postgres() -> dict[str, dict[str, Any]]:
+    return {doc["kind"]: doc for doc in yaml.safe_load_all(_build(LOCAL / "postgres"))}
+
+
+def test_local_postgres_keeps_its_data_on_a_local_path_volume(
+    local_postgres: dict[str, dict[str, Any]],
+) -> None:
+    postgres = local_postgres["StatefulSet"]
+    (claim,) = postgres["spec"]["volumeClaimTemplates"]
+    assert claim["spec"]["storageClassName"] == "local-path"
+    (container,) = postgres["spec"]["template"]["spec"]["containers"]
+    assert container["image"] == "postgres:16-alpine"
+    assert {"name": claim["metadata"]["name"], "mountPath": "/var/lib/postgresql/data"} in (
+        container["volumeMounts"]
+    )
+    service = local_postgres["Service"]
+    assert service["metadata"]["name"] == postgres["spec"]["serviceName"] == "postgres"
+
+
+def test_scrape_sinks_points_every_job_at_local_postgres(
+    local_postgres: dict[str, dict[str, Any]],
+) -> None:
+    secret = local_postgres["Secret"]
+    assert secret["metadata"]["name"] == "scrape-sinks"  # unhashed: Jobs are created apart
+    assert set(secret["data"]) == {"SCRAPE_SINK", "PGPASSWORD"}
+    sink = base64.b64decode(secret["data"]["SCRAPE_SINK"]).decode()
+    assert sink == "postgresql://scrape@postgres/scrape"
+    (container,) = local_postgres["StatefulSet"]["spec"]["template"]["spec"]["containers"]
+    password = {"secretKeyRef": {"name": "scrape-sinks", "key": "PGPASSWORD"}}
+    assert {"name": "POSTGRES_PASSWORD", "valueFrom": password} in container["env"]
+
+
+def test_backups_run_nightly_to_the_host_as_its_user(
+    local_postgres: dict[str, dict[str, Any]],
+) -> None:
+    backup = local_postgres["CronJob"]
+    assert backup["spec"]["concurrencyPolicy"] == "Forbid"
+    pod = backup["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert pod["securityContext"]["runAsUser"] == 1000
+    (volume,) = pod["volumes"]
+    assert volume["hostPath"] == {"path": "/mnt/groceries-scraper/backups", "type": "Directory"}

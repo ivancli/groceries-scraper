@@ -1,0 +1,17 @@
+# The Sinks' database, applied once with `kubectl apply -k`; kept out of the Job template.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: groceries-scraper
+resources:
+  - postgres.yaml
+  - backup.yaml
+secretGenerator:
+  - name: scrape-sinks
+    options:
+      disableNameSuffixHash: true  # Jobs reference it by name and aren't rendered here
+    literals:
+      - SCRAPE_SINK=postgresql://scrape@postgres/scrape
+      # Public, like compose.yaml's: the database is reachable only inside the cluster.
+      - PGPASSWORD=local-only

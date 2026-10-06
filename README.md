@@ -168,7 +168,8 @@ Install the extra for each backend, then pass `--sink` to `run`/`replay`, or exp
 saved Run later. Runs with Supplied Start Requests are exported whatever their Run
 Health; other failed Runs are skipped unless `--force`. Re-exporting replaces the
 earlier copy, including Start Request Outcomes in Postgres. Sinks are checked before
-the crawl; a Sink failure exits `3`.
+the crawl; a Sink failure exits `3`. Without `--sink`, `run` and `replay` read
+whitespace-separated Sink URLs from `SCRAPE_SINK`.
 
 ```bash
 uv sync --locked --extra postgres --extra s3
@@ -222,10 +223,12 @@ so a Job's Run lands in `./runs` and an edited Site config applies to the next J
 without rebuilding the image. From the repository root:
 
 ```bash
-mkdir -p runs  # must exist first, or Docker creates it owned by root
+mkdir -p runs backups  # must exist first, or Docker creates them owned by root
 k3d cluster create groceries \
   -v "$PWD/runs:/mnt/groceries-scraper/runs@all" \
-  -v "$PWD/sites:/mnt/groceries-scraper/sites@all"
+  -v "$PWD/sites:/mnt/groceries-scraper/sites@all" \
+  -v "$PWD/backups:/mnt/groceries-scraper/backups@all"
+kubectl apply -k deploy/k8s/overlays/local/postgres
 docker build -t groceries-scraper:dev .
 k3d image import groceries-scraper:dev -c groceries
 job=$(kubectl kustomize deploy/k8s/overlays/local \
@@ -239,13 +242,36 @@ The Run directory appears as `runs/aldi/<run_id>/`, ready for `scrape inspect` a
 is created, so another checkout needs its own cluster. The pod runs as UID/GID 1000 so
 the files are yours; if `id -u` or `id -g` differ, change `runAsUser`/`runAsGroup` in
 [`deploy/k8s/overlays/local/job.yaml`](deploy/k8s/overlays/local/job.yaml).
-Sink credentials such as `PGPASSWORD` come from an optional `scrape-sinks` Secret.
+Each Job exports to the cluster's Postgres: the `scrape-sinks` Secret sets `SCRAPE_SINK`,
+which `run` and `replay` read when no `--sink` is given, and `PGPASSWORD`.
 The local overlay makes no Archive.
 
 The Job succeeds only for an `ok` Run. Exit codes 1–4 (degraded, failed, Sink or
 Archive failure, but also an uncaught error, which exits 1) fail it at once; other pod failures retry up to twice, and evicted
 pods don't count. `kubectl get jobs -l groceries-scraper/site=aldi` shows the outcome,
 and `k3d cluster delete groceries` removes the cluster.
+
+### Back up and restore the cluster's Postgres
+
+This database is the system of record for price history
+([ADR-0004](docs/adr/0004-price-history-local-changes-to-tracker.md)). Its volume survives
+the pod but not `k3d cluster delete`, so a CronJob dumps it nightly at 03:00 UTC (or when the
+PC is next on) to `backups/scrape-<time>.dump`, keeping the newest 14. To back up now:
+
+```bash
+kubectl create job --from=cronjob/postgres-backup postgres-backup-now
+```
+
+To restore a dump, into a fresh cluster's empty `scrape` database or into a new database
+beside it to check it first:
+
+```bash
+dump=backups/scrape-<time>.dump
+kubectl exec postgres-0 -- createdb -U scrape restored  # skip to restore into `scrape`
+kubectl exec -i postgres-0 -- pg_restore -U scrape -d restored --no-owner < "$dump"
+kubectl exec postgres-0 -- psql -U scrape -d restored -c \
+  'SELECT (SELECT count(*) FROM scrape_runs) runs, (SELECT count(*) FROM scrape_records) records'
+```
 
 ## Save and test Golden Fixtures
 

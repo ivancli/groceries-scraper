@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 86400  # a PC that was off at 03:00 still backs up when it's back
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          # hostPath files keep the pod's UID, so run as yours: change both if `id -u`/`id -g` aren't 1000.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              envFrom:
+                - secretRef:
+                    name: scrape-sinks
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: PGHOST
+                  value: postgres
+                - name: PGUSER
+                  value: scrape
+                - name: PGDATABASE
+                  value: scrape
+              # A dump is renamed into place only once complete, and only then are old ones pruned.
+              command:
+                - /bin/sh
+                - -euc
+                - |
+                  name="scrape-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  pg_dump --format=custom --file="/backups/.$name"
+                  mv "/backups/.$name" "/backups/$name"
+                  ls /backups | grep -E '^scrape-[0-9TZ]+\.dump$' | sort -r | tail -n +15 \
+                    | while read -r old; do rm -- "/backups/$old"; done
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              hostPath:
+                path: /mnt/groceries-scraper/backups
+                type: Directory
