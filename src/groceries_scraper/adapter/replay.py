@@ -29,12 +29,7 @@ from groceries_scraper.run import Run
 from groceries_scraper.run.directory import read_manifest
 from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.redaction import REDACTED
-from groceries_scraper.run.supply import (
-    SUPPLY_FILE,
-    SuppliedStartRequest,
-    SupplyError,
-    read_supply,
-)
+from groceries_scraper.run.supply import SUPPLY_FILE, Supply, SupplyError
 
 _REDACTED_MARKERS = (REDACTED, quote(REDACTED))
 
@@ -113,7 +108,7 @@ class SourceRun:
     run: Run
     config: dict[str, Any]
     index: ReplayIndex
-    supply: list[SuppliedStartRequest] | None = None  # a supplied Run's Start Requests
+    supply: Supply | None = None
 
     @classmethod
     def load(cls, path: Path) -> Self:
@@ -144,7 +139,7 @@ class SourceRun:
         captures.sort(key=lambda capture: int(capture[0]["capture_no"]))
         location = manifest.get("location", DEFAULT_LOCATION)
         run = Run(manifest["site"], manifest["run_id"], path, location)
-        supply = read_supply(path / SUPPLY_FILE) if manifest.get("supplied") else None
+        supply = Supply.read(path / SUPPLY_FILE) if manifest.get("supplied") else None
         return cls(run, config, ReplayIndex(captures, ignore), supply)
 
 

@@ -15,13 +15,7 @@ from groceries_scraper.run.keys import DUPLICATE_KEY
 from groceries_scraper.run.redaction import REDACTED, MetadataRedactor
 from groceries_scraper.run.stats import RunStats
 from groceries_scraper.run.summary import RunOutcome
-from groceries_scraper.run.supply import (
-    OUTCOMES_FILE,
-    SUPPLY_FILE,
-    SuppliedStartRequest,
-    SupplyOutcomes,
-    write_supply,
-)
+from groceries_scraper.run.supply import OUTCOMES_FILE, SUPPLY_FILE, Supply, SupplyOutcomes
 
 
 @dataclass(frozen=True)
@@ -39,11 +33,12 @@ class RunRecorder:
         site: Site,
         replay_of: Run | None = None,
         job: str | None = None,
-        supply: list[SuppliedStartRequest] | None = None,
+        supply: Supply | None = None,
     ) -> None:
         self.run = run
         self.stats = RunStats.for_site(site)
-        self.outcomes = SupplyOutcomes(supply) if supply is not None else None
+        self.supplied = supply is not None
+        self.outcomes = SupplyOutcomes(supply or Supply(()))
         self.level = site.settings.record_level
         self.ignore_params = frozenset(site.replay.ignore_params)
         self._sensitive_headers = frozenset(
@@ -76,7 +71,7 @@ class RunRecorder:
             self._manifest["job"] = job
         if supply is not None:
             # Kept beside the Captures, so a Replay can supply the same Start Requests.
-            write_supply(run.path / SUPPLY_FILE, supply)
+            supply.write(run.path / SUPPLY_FILE)
             self._manifest.update(supplied=True, supplied_refs=len(supply))
         if replay_of is not None:
             self._manifest["replay_of"] = {"site": replay_of.site, "run_id": replay_of.run_id}
@@ -89,10 +84,8 @@ class RunRecorder:
         self._manifest["missing"].append(self.redact_metadata(metadata))
 
     def finish(self, outcome: RunOutcome) -> None:
-        if self.outcomes is not None:
-            lines = [json.dumps(line, ensure_ascii=False) for line in self.outcomes.to_json()]
-            path = self.run.path / OUTCOMES_FILE
-            path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        if self.supplied:
+            self.outcomes.write(self.run.path / OUTCOMES_FILE)
         self._manifest.update(outcome.to_json())
         self._write_manifest()
 

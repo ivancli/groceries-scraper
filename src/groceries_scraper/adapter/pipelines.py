@@ -28,7 +28,7 @@ class EmittedRecord:
 
 class RecordPipeline:
     def __init__(
-        self, run: Run, limit: int | None, stats: RunStats, outcomes: SupplyOutcomes | None
+        self, run: Run, limit: int | None, stats: RunStats, outcomes: SupplyOutcomes
     ) -> None:
         self.run = run
         self.limit = limit
@@ -65,8 +65,7 @@ class RecordPipeline:
         self._file(record.record_type).write(line + "\n")
         self.written += 1
         self.stats.add_record(record)
-        if self.outcomes is not None and item.ref is not None:
-            self.outcomes.add_record(item.ref)
+        self.outcomes.add_record(item.ref)
         return item
 
     def _file(self, record_type: str) -> IO[str]:

@@ -641,7 +641,21 @@ def test_the_accepts_pattern_must_be_anchored() -> None:
 
 @pytest.mark.parametrize(
     "construct",
-    ["(?<=x)", "(?<!x)", "(?P<id>\\d+)", "(?<id>\\d+)", "(?i)", "(?P=id)", "\\A", "\\Z"],
+    [
+        "(?<=x)",
+        "(?<!x)",
+        "(?P<id>\\d+)",
+        "(?<id>\\d+)",
+        "(?i)",
+        "(?P=id)",
+        "\\A",
+        "\\Z",
+        "\\d{,3}",
+        "\\d++",
+        "\\d*+",
+        "\\d?+",
+        "\\d{2}+",
+    ],
 )
 def test_the_accepts_pattern_stays_within_the_python_javascript_subset(construct: str) -> None:
     [error] = _accepting(f"^https://x\\.example/p/{construct}")
@@ -676,4 +690,20 @@ def test_every_accepts_example_must_match_the_pattern() -> None:
 
     assert errors == [
         "accepts.examples[1]: `https://x.example/c/dairy` does not match `accepts.url`"
+    ]
+
+
+def test_accepts_classes_match_ascii_only_as_in_javascript() -> None:
+    errors = _errors(
+        {"product": {"record": "product"}},
+        start=[{"url": PRODUCT_URL, "page_type": "product"}],
+        accepts={
+            "page_type": "product",
+            "url": "^https://x\\.example/p/\\d+$",
+            "examples": [PRODUCT_URL, "https://x.example/p/\u0661"],
+        },
+    )
+
+    assert errors == [
+        "accepts.examples[1]: `https://x.example/p/\u0661` does not match `accepts.url`"
     ]

@@ -358,10 +358,11 @@ def _shared_regex(pattern: str) -> str:
     if construct := _outside_shared_subset(pattern):
         raise _config_error(
             f"`{construct}` is outside the Python/JavaScript regex subset: use only "
-            "`(?:…)`, `(?=…)` and `(?!…)` groups, with no anchors besides `^` and `$`"
+            "`(?:…)`, `(?=…)` and `(?!…)` groups, no anchors besides `^` and `$`, "
+            "and no `{,n}` or possessive quantifiers"
         )
     try:
-        re.compile(pattern)
+        re.compile(pattern, re.ASCII)
     except re.error as exc:
         raise _config_error(f"invalid pattern: {exc}") from None
     return pattern
@@ -383,6 +384,10 @@ def _outside_shared_subset(pattern: str) -> str | None:
             in_class = True
         elif pattern.startswith("(?", i) and pattern[i + 2 : i + 3] not in (":", "=", "!"):
             return pattern[i : i + 4]
+        elif pattern.startswith("{,", i):
+            return "{,"
+        elif char in "*+?}" and pattern[i + 1 : i + 2] == "+":
+            return pattern[i : i + 2]
         i += 1
     return None
 
@@ -395,7 +400,8 @@ class AcceptsRule(_Model):
     examples: Annotated[list[str], Field(min_length=1)]
 
     def matches(self, url: str) -> bool:
-        return re.search(self.url, url) is not None
+        # ASCII classes, like JavaScript's without the `u` flag.
+        return re.search(self.url, url, re.ASCII) is not None
 
 
 class Site(_Model):

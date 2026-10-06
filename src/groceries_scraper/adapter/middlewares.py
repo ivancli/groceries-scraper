@@ -111,11 +111,7 @@ class RefreshStatusMiddleware:
 
 
 class SharedRobotsTxtMiddleware(RobotsTxtMiddleware):
-    """Scrapy's awaits one shared Deferred per host, but awaiting it resets its result to None.
-
-    So the second request queued behind the robots.txt download read "no robots.txt" and was
-    sent; reading the parser back after the wait gives every request the real one.
-    """
+    """Scrapy's shared robots.txt Deferred yields None (allow all) to later waiters; re-read it."""
 
     async def robot_parser(self, request: Request) -> RobotParser | None:
         await super().robot_parser(request)

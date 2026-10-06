@@ -17,12 +17,7 @@ from groceries_scraper.run.archive import (
 from groceries_scraper.run.directory import RunDirectoryError, SavedRun
 from groceries_scraper.run.sinks import ExportError, Sink, SinkError, export_run, open_sink
 from groceries_scraper.run.summary import RunOutcome
-from groceries_scraper.run.supply import (
-    SuppliedStartRequest,
-    SupplyError,
-    check_supply,
-    read_supply,
-)
+from groceries_scraper.run.supply import Supply, SupplyError
 
 RUNS_DIR = Path("runs")
 EXPORT_FAILED = 3  # beyond Run Health's 0 / 1 / 2
@@ -79,16 +74,22 @@ def _location_or_exit(site: Site, location: str | None) -> str:
         raise typer.Exit(code=1) from None
 
 
-def _supply_or_exit(
-    site: Site, load: Callable[[], list[SuppliedStartRequest]]
-) -> list[SuppliedStartRequest]:
+def _supply_or_exit(site: Site, path: Path) -> Supply:
     try:
-        supply = load()
-        check_supply(site, supply)
+        supply = Supply.read(path)
     except SupplyError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
+    _check_supply_or_exit(site, supply)
     return supply
+
+
+def _check_supply_or_exit(site: Site, supply: Supply) -> None:
+    try:
+        supply.check(site)
+    except SupplyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
 
 
 def _refuse_overlap_or_exit(archive_url: str | None, sink_urls: list[str] | None) -> None:
@@ -189,6 +190,10 @@ def run(
     """Run a Site; exits 0 / 1 / 2 for Run Health, 3 if export failed, 4 if archiving failed."""
     from groceries_scraper.adapter.crawl import crawl  # Scrapy is slow to import
 
+    if supply is not None and limit is not None:
+        # A limit-cut ref would read as never checked; supply fewer refs instead.
+        typer.echo("--limit cannot be used with --supply", err=True)
+        raise typer.Exit(code=1)
     _refuse_overlap_or_exit(archive_url, sink)
     sinks = _open_sinks_or_exit(sink)
     archive = _open_archive_or_exit(archive_url)
@@ -200,7 +205,7 @@ def run(
             update={"settings": site.settings.model_copy(update={"record_level": record})}
         )
     location = _location_or_exit(site, location)
-    supplied = None if supply is None else _supply_or_exit(site, lambda: read_supply(supply))
+    supplied = None if supply is None else _supply_or_exit(site, supply)
     new_run = create_run(RUNS_DIR, site.site, location=location)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
     outcome = crawl(site, new_run, limit, supply=supplied)
@@ -235,12 +240,11 @@ def replay(
         site = _site_or_exit(lambda: checked_site(source.config, {}, str(run_dir)))
     # The source Run's Captures answer for its Location only.
     location = _location_or_exit(site, source.run.location)
-    supply = source.supply
-    if supply is not None:  # an edited config must still accept it
-        _supply_or_exit(site, lambda: supply)
+    if source.supply is not None:  # an edited config must still accept it
+        _check_supply_or_exit(site, source.supply)
     new_run = create_run(RUNS_DIR, site.site, location=location)
     typer.echo(f"Run {new_run.run_id} (replay of {source.run.run_id}): {new_run.path}", err=True)
-    outcome = crawl(site, new_run, replay_of=source, supply=supply)
+    outcome = crawl(site, new_run, replay_of=source, supply=source.supply)
     _report_and_exit(outcome, new_run.path, sinks, archive)
 
 
