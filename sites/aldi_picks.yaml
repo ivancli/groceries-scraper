@@ -1,8 +1,14 @@
-# Only the ALDI products listed under `start`, read from their product pages.
+# ALDI products listed under `start` or supplied by the Dispatcher, read from their product pages.
 site: aldi_picks
 settings:
   download_delay: 1.0
   record_level: all
+schedule: {every: 30m}
+accepts:
+  page_type: product
+  url: '^https://www\.aldi\.com\.au/product/'
+  examples:
+    - https://www.aldi.com.au/product/aldi-natural-walnuts-500g-000000000000282420
 records:
   product: {key: [url]}
 health:
@@ -26,5 +32,9 @@ page_types:
         type: number
         required: true
       currency: {template: AUD, type: string}
-      size: {xpath: "normalize-space(substring-before(//span[@data-test='product-details__unit-of-measurement'], '('))"}
-      unit_price: {xpath: "normalize-space(//span[contains(@class,'product-details__comparison-price')])"}
+      size:
+        xpath: "normalize-space(substring-before(//span[@data-test='product-details__unit-of-measurement'], '('))"
+        type: string
+      unit_price_text:
+        xpath: "normalize-space(//span[contains(@class,'product-details__comparison-price')])"
+        type: string

@@ -10,6 +10,7 @@ from jinja2 import TemplateSyntaxError, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 
 from groceries_scraper.config.models import (
+    PRICE_RECORD,
     STEP_KINDS,
     TEMPLATE_NAMES,
     ContractField,
@@ -76,7 +77,14 @@ def _check_refs(site: Site, findings: Findings) -> None:
 def _check_accepts(site: Site, findings: Findings) -> None:
     accepts = site.accepts
     if accepts is None:
+        if site.schedule is not None:
+            findings.errors.append(
+                "schedule: a Site with a Schedule needs `accepts`; "
+                "the Dispatcher only schedules Supplied Start Requests"
+            )
         return
+    if site.schedule is None:
+        findings.errors.append("accepts: a Site with an Accepts Rule needs a `schedule`")
     findings.errors += [
         f"accepts.examples[{i}]: `{url}` does not match `accepts.url`"
         for i, url in enumerate(accepts.examples)
@@ -88,6 +96,38 @@ def _check_accepts(site: Site, findings: Findings) -> None:
             f"accepts.page_type: Page Type `{accepts.page_type}` has Follow Rules; "
             "a Supplied Start Request must not start a crawl"
         )
+    if page_type is not None:
+        _check_price_record(accepts.page_type, page_type, findings)
+
+
+def _check_price_record(name: str, page_type: PageType, findings: Findings) -> None:
+    """The Dispatcher reads only these Fields, so others are allowed."""
+    if page_type.record is None:
+        findings.errors.append(
+            f"accepts.page_type: Page Type `{name}` emits no Records; "
+            "an accepting Site's Records must match the Price Record contract"
+        )
+        return
+    contract = _Contract(findings, "the Price Record contract")
+    for field_name, wanted in PRICE_RECORD.items():
+        path = f"page_types.{name}.fields.{field_name}"
+        if field_name in page_type.fields:
+            contract.field(path, wanted, page_type.fields[field_name])
+        elif wanted.required:
+            findings.errors.append(f"{path}: missing; the Price Record contract requires it")
+
+
+def check_sites(sites: Mapping[str, Site]) -> list[str]:
+    """Errors across Sites, keyed by source: regex overlap is undecidable, so examples stand in."""
+    accepting = {source: site for source, site in sites.items() if site.accepts is not None}
+    return [
+        f"{source}: accepts.examples[{i}]: `{url}` is also accepted by Site `{other.site}` "
+        f"({other_source})"
+        for source, site in accepting.items()
+        for i, url in enumerate(site.accepts.examples)  # type: ignore[union-attr]
+        for other_source, other in accepting.items()
+        if other_source != source and other.accepts.matches(url)  # type: ignore[union-attr]
+    ]
 
 
 def _start_page_types(site: Site) -> list[tuple[str, str]]:
@@ -137,7 +177,7 @@ def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
     for record_type, spec in site.records.items():
         if spec.fields is None:
             continue
-        contract = _Contract(findings, record_type)
+        contract = _Contract(findings, f"Record Type `{record_type}`'s contract")
         for name in sorted(emitters[record_type]):
             contract.check(f"page_types.{name}.fields", spec.fields, site.page_types[name].fields)
     findings.errors += [
@@ -158,45 +198,39 @@ class _Contract:
     """Checks a Page Type's Fields against its Record Type's Record Contract."""
 
     findings: Findings
-    record_type: str
+    label: str  # names the contract in messages
 
     def check(
         self, prefix: str, contract: dict[str, ContractField], specs: dict[str, FieldSpec]
     ) -> None:
         for name, wanted in contract.items():
             if name in specs:
-                self._field(f"{prefix}.{name}", wanted, specs[name])
+                self.field(f"{prefix}.{name}", wanted, specs[name])
             else:
-                self._error(f"{prefix}.{name}", f"missing; {self._label}'s contract declares it")
+                self._error(f"{prefix}.{name}", f"missing; {self.label} declares it")
         for name in specs:
             if name not in contract:
-                self._error(f"{prefix}.{name}", f"not in {self._label}'s contract")
+                self._error(f"{prefix}.{name}", f"not in {self.label}")
 
-    def _field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
+    def field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
         if spec.type is None:
             # Untyped Fields skip Coercion, so nothing would enforce the contract's type.
-            fix = f"add `type: {wanted.type}` to match {self._label}'s contract"
+            fix = f"add `type: {wanted.type}` to match {self.label}"
             self._error(path, f"no type; {fix}")
             return
         if spec.type != wanted.type:
-            self._error(
-                path, f"type `{spec.type}`, but {self._label}'s contract says `{wanted.type}`"
-            )
+            self._error(path, f"type `{spec.type}`, but {self.label} says `{wanted.type}`")
             return  # nested Fields of a different type would only add noise
         # A stricter emitter is fine: optional in the contract only allows nulls.
         if wanted.required and not spec.required:
-            self._error(path, f"{self._label}'s contract requires `required: true`")
+            self._error(path, f"{self.label} requires `required: true`")
         if (wanted.items is None) != (spec.items is None):
             got, says = _array_shape(spec.items), _array_shape(wanted.items)
-            self._error(path, f"{got}, but {self._label}'s contract says {says}")
+            self._error(path, f"{got}, but {self.label} says {says}")
         elif wanted.items is not None and spec.items is not None:
-            self._field(f"{path}.items", wanted.items, spec.items)
+            self.field(f"{path}.items", wanted.items, spec.items)
         else:
             self.check(f"{path}.fields", wanted.fields, spec.fields)
-
-    @property
-    def _label(self) -> str:
-        return f"Record Type `{self.record_type}`"
 
     def _error(self, path: str, message: str) -> None:
         self.findings.errors.append(f"{path}: {message}")

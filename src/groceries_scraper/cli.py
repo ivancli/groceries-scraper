@@ -1,11 +1,19 @@
 import json
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 
-from groceries_scraper.config import ConfigError, Findings, Site, checked_site, load_checked_site
+from groceries_scraper.config import (
+    ConfigError,
+    Findings,
+    Site,
+    check_sites,
+    checked_site,
+    load_checked_site,
+)
 from groceries_scraper.run import create_run
 from groceries_scraper.run.archive import (
     Archive,
@@ -81,9 +89,23 @@ def deploy_job(
 
 @app.command()
 def validate(site_config: Path) -> None:
-    """Validate a Site config."""
-    _load_site_or_exit(site_config)
-    typer.echo(f"{site_config} is valid")
+    """Validate a Site config, or every `*.yaml` in a directory and their Accepts Rules together."""
+    if not site_config.is_dir():
+        _load_site_or_exit(site_config)
+        typer.echo(f"{site_config} is valid")
+        return
+    sites: dict[str, Site] = {}
+    failed = False
+    for path in sorted(site_config.glob("*.yaml")):
+        if (site := _reported_site(partial(load_checked_site, path))) is None:
+            failed = True
+            continue
+        sites[str(path)] = site
+        typer.echo(f"{path} is valid")
+    if errors := check_sites(sites):
+        typer.echo("\n".join(["Sites accept the same URL:", *errors]), err=True)
+    if failed or errors:
+        raise typer.Exit(code=1)
 
 
 def _load_site_or_exit(site_config: Path) -> Site:
@@ -91,12 +113,19 @@ def _load_site_or_exit(site_config: Path) -> Site:
 
 
 def _site_or_exit(load: Callable[[], tuple[Site, Findings]]) -> Site:
+    if (site := _reported_site(load)) is None:
+        raise typer.Exit(code=1)
+    return site
+
+
+def _reported_site(load: Callable[[], tuple[Site, Findings]]) -> Site | None:
+    """Prints the findings; None when the Site is invalid."""
     try:
         site, findings = load()
     except ConfigError as exc:
         _warn(exc.findings.warnings)
         typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from None
+        return None
     _warn(findings.warnings)
     return site
 

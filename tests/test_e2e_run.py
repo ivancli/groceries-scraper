@@ -101,7 +101,12 @@ class _Shop(BaseHTTPRequestHandler):
         elif url.path.startswith("/p/"):
             sku = url.path.removeprefix("/p/")
             status, body = self.server.product_responses.get(
-                sku, (200, f'<h1 data-sku="{sku}">Product {sku}</h1>')
+                sku,
+                (
+                    200,
+                    f'<link rel="canonical" href="/p/{sku}"><h1 data-sku="{sku}">Product {sku}</h1>'
+                    f'<b class="price">1.50</b>',
+                ),
             )
             self._send("text/html; charset=utf-8", body, status=status)
         else:
@@ -1561,6 +1566,7 @@ site: e2e
 settings: {download_delay: 0, concurrent_requests_per_domain: 1}
 $session
 records: {product: {key: [sku]}}
+schedule: {every: 30m}
 accepts:
   page_type: product
   url: '^$pattern/p/'
@@ -1573,7 +1579,9 @@ page_types:
     record: product
     fields:
       sku: {css: "h1::attr(data-sku)", type: string, required: true}
-      name: {css: "h1::text", type: string}
+      url: {css: "link[rel=canonical]::attr(href)", type: string, required: true}
+      name: {css: "h1::text", type: string, required: true}
+      price: {css: "b.price::text", type: number, required: true}
 """)
 
 
@@ -1644,7 +1652,7 @@ def test_refused_and_broken_product_pages_are_blocked_or_failed(
     shop.product_responses = {
         "p10": (403, "denied"),
         "p11": (429, "slow down"),
-        "p12": (200, "<h1>no sku</h1>"),
+        "p12": (200, '<link rel="canonical" href="/p/p12"><h1>no sku</h1><b class="price">1</b>'),
         "p20": (500, "oops"),
     }
 

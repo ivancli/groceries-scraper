@@ -1,6 +1,6 @@
 # Tracker integration: tech plan
 
-Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
+Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56); Schedules, the Price Record contract and `aldi_picks` opting in (#57). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
 
 ## Flow
 
