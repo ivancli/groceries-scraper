@@ -209,6 +209,42 @@ CI builds the image on every pull request and checks it offline: `validate` for 
 Site and a Replay of the ALDI Golden Fixture. On `main` it pushes
 `ghcr.io/ivancli/groceries-scraper:<sha>` and `:main`.
 
+## Run as a Job on a local k3d cluster
+
+Each Run can execute as one Kubernetes Job. A Kustomize overlay holds the cluster's
+settings and `scrape deploy job` adds the Site and Location
+([ADR-0003](docs/adr/0003-kubernetes-jobs-with-archives.md)). The local overlay
+([`deploy/k8s/overlays/local`](deploy/k8s/overlays/local)) needs
+[k3d](https://k3d.io/) and `kubectl`. Its node maps this checkout's `runs/` and `sites/`,
+so a Job's Run lands in `./runs` and an edited Site config applies to the next Job
+without rebuilding the image. From the repository root:
+
+```bash
+mkdir -p runs  # must exist first, or Docker creates it owned by root
+k3d cluster create groceries \
+  -v "$PWD/runs:/mnt/groceries-scraper/runs@all" \
+  -v "$PWD/sites:/mnt/groceries-scraper/sites@all"
+docker build -t groceries-scraper:dev .
+k3d image import groceries-scraper:dev -c groceries
+kubectl kustomize deploy/k8s/overlays/local \
+  | uv run scrape deploy job sites/aldi.yaml \
+  | kubectl create -f -
+kubectl logs -f -l groceries-scraper/site=aldi
+```
+
+The Run directory appears as `runs/aldi/<run_id>/`, ready for `scrape inspect` and
+`replay`. Re-import the image after changing code; the mappings are fixed when the cluster
+is created, so another checkout needs its own cluster. The pod runs as UID/GID 1000 so
+the files are yours; if `id -u` or `id -g` differ, change `runAsUser`/`runAsGroup` in
+[`deploy/k8s/overlays/local/job.yaml`](deploy/k8s/overlays/local/job.yaml).
+Sink credentials such as `PGPASSWORD` come from an optional `scrape-sinks` Secret.
+The local overlay makes no Archive.
+
+The Job succeeds only for an `ok` Run. Exit codes 1–4 (degraded, failed, Sink or
+Archive failure) fail it at once; other pod failures retry up to twice, and evicted
+pods don't count. `kubectl get jobs -l groceries-scraper/site=aldi` shows the outcome,
+and `k3d cluster delete groceries` removes the cluster.
+
 ## Save and test Golden Fixtures
 
 Finish a crawl without `--limit`, with recording enabled, then save it:

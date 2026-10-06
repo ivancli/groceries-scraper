@@ -1,0 +1,59 @@
+# A template, not a runnable Job: `scrape deploy job` adds the name, labels and `scrape run` args.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scrape
+  labels:
+    app.kubernetes.io/name: groceries-scraper
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 14400  # 4 hours
+  ttlSecondsAfterFinished: 604800  # 7 days, to read the logs of a failed Run
+  # Only pod failures the Run didn't cause are retried.
+  podFailurePolicy:
+    rules:
+      - action: Ignore  # eviction, preemption, node drain: not the Run's fault, not a retry
+        onPodConditions:
+          - type: DisruptionTarget
+      - action: FailJob  # Run Health (1 degraded, 2 failed), Sink (3) or Archive (4): a retry won't fix it
+        onExitCodes:
+          containerName: scrape
+          operator: In
+          values: [1, 2, 3, 4]
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: groceries-scraper
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120  # time to Archive and export after SIGTERM
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scrape
+          image: groceries-scraper
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - secretRef:
+                name: scrape-sinks
+                optional: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi  # no CPU limit: throttling only slows a Run that is waiting on retailers anyway
+          volumeMounts:
+            - name: runs
+              mountPath: /app/runs
+      volumes:
+        - name: runs
+          emptyDir: {}

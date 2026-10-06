@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scrape
+spec:
+  template:
+    spec:
+      # hostPath files keep the pod's UID, so run as yours: change both if `id -u`/`id -g` aren't 1000.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: scrape
+          imagePullPolicy: Never  # imported with `k3d image import`, never pulled
+          env:
+            - name: HOME  # the image has no account for your UID, which leaves an unwritable /
+              value: /tmp
+          volumeMounts:
+            - name: sites
+              mountPath: /app/sites  # over the baked-in configs
+              readOnly: true
+      volumes:
+        - name: runs
+          emptyDir: null
+          hostPath:
+            path: /mnt/groceries-scraper/runs
+            type: Directory
+        - name: sites
+          hostPath:
+            path: /mnt/groceries-scraper/sites
+            type: Directory
