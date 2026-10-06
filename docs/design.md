@@ -15,7 +15,7 @@ src/groceries_scraper/
   config/                    # Pydantic models, loader, semantic validation
   engine/                    # PURE: pipes, steps, fields, follow rules, trace (no scrapy import)
   adapter/                   # Scrapy spider, capture/replay middleware, pipelines
-  run/                       # run directory, summary, health, diff, sinks
+  run/                       # run directory, summary, health, diff, sinks, supply outcomes
   cli.py                     # Typer app: validate | run | replay | inspect | fixture | diff
 tests/sites/<site>/          # Golden Fixtures (captures + expected records)
 runs/<site>/<run_id>/        # Run output (gitignored)
@@ -193,6 +193,42 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - `download_delay` and `concurrent_requests_per_domain` stay per Site: the pool spreads
   cookie identities, not request rate.
 
+### Supplied Start Requests
+- A Site may declare an Accepts Rule, so others can hand it product URLs to check
+  ([ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md)):
+
+  ```yaml
+  accepts:
+    page_type: product                          # must have no Follow Rules
+    url: '^https://shop\.example/product/'      # Python/JavaScript-shared regex subset
+    examples: [https://shop.example/product/milk-2l]
+  ```
+
+- The tracker matches the same pattern in JavaScript, so validation requires a leading `^`
+  and allows only `(?:…)`, `(?=…)` and `(?!…)` groups: no look-behind, named groups,
+  inline flags or `\A`/`\Z`. Every example must match. The accepted Page Type must not
+  follow links, so a supplied URL never turns into a crawl; it is reachable like a Start
+  Request's Page Type, and gets no Variables.
+- `scrape run --supply FILE` reads JSONL `{"ref": …, "url": …}` and requests those URLs
+  instead of `start:`, each at the accepted Page Type. Refs must be unique. A URL the
+  pattern doesn't match, a malformed line or a Site without `accepts` is refused before
+  any request (exit 1, no Run directory).
+- Every Record carries `_meta.ref`. Its `scraped_at` is when its Capture was fetched, so
+  a Replay keeps it.
+- `outcomes.jsonl` holds one Start Request Outcome per ref, in supply order:
+  `{"ref", "url", "outcome"}`, plus `error` for `failed`.
+
+  | Outcome | When |
+  |---|---|
+  | `ok` | at least one Record written |
+  | `not_found` | final response 404/410 |
+  | `blocked` | final response 403/429, including a `refresh_on` status past `max_refresh` |
+  | `skipped` | denied by robots.txt (or missing from a Replay's Captures), or never ended before the Run did |
+  | `failed` | anything else: other HTTP errors, network errors, extraction errors, no Record, Session lost |
+
+  Detecting a challenge page as `blocked` needs a per-page Health Check, which doesn't
+  exist yet; such a page is `failed` when it yields no Record.
+
 ### Record Keys
 - Within a Run, a Record whose Record Key matches an earlier Record of its Record Type is
   dropped (`duplicate Record Key`), as is one with a null or absent key Field. Drops are
@@ -235,8 +271,12 @@ runs/<site>/<run_id>/
   captures/0001-listing.meta.json   # request (redacted), response meta, parent capture, page type, variables
   captures/0001-listing.body        # raw body
   traces/0001-listing.trace.json    # per-field / per-follow-rule step values + errors
-  records/product.jsonl        # each record has _meta: site, run_id, location, record_type, scraped_at, source_url, capture_no
+  records/product.jsonl        # each record has _meta: site, run_id, location, record_type, scraped_at, source_url, capture_no (+ ref when supplied)
+  supply.jsonl                 # supplied Runs only: the Supplied Start Requests, for Replay
+  outcomes.jsonl               # supplied Runs only: one Start Request Outcome per ref
 ```
+
+- A supplied Run's `run.json` has `supplied: true` and `supplied_refs` (the ref count).
 
 - `--archive` copies the finished directory to S3 as is (see [Archive](#archive)).
 - Redacted by default: `Cookie`, `Set-Cookie`, `Authorization`, plus Site-configured headers.
@@ -311,6 +351,9 @@ runs/<site>/<run_id>/
   `replay_of` (`site`, `run_id`) and `missing` (redacted request metadata, as in Captures);
   `stats.requests.missing` counts them. Missing requests are not HTTP errors and do not
   affect Run Health. A redirect whose `Location` was partly redacted cannot be followed.
+- A Replay of a supplied Run supplies the same Start Requests (an edited config must still
+  accept them) and writes its own `outcomes.jsonl`. robots.txt-denied refs have no
+  Capture, so they are `missing` and stay `skipped`.
 - An edited config's `replay.ignore_params` applies to the new Run's Captures only; a
   difference from the source Run's is warned about.
 
@@ -341,7 +384,7 @@ For installation and a runnable retailer example, see the [quickstart](../README
 
 ```
 scrape validate sites/<site>.yaml
-scrape run sites/<site>.yaml [--location NAME] [--limit N] [--record all|errors|off] [--sink URL ...] [--archive URL]
+scrape run sites/<site>.yaml [--location NAME] [--supply FILE] [--limit N] [--record all|errors|off] [--sink URL ...] [--archive URL]
 scrape replay runs/<site>/<run_id> [--config edited.yaml] [--sink URL ...] [--archive URL]
 scrape inspect runs/<site>/<run_id> <capture_no> [--field name] [--body]
 scrape fixture save runs/<site>/<run_id>          # -> tests/sites/<site>/

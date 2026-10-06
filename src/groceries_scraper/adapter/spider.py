@@ -1,7 +1,7 @@
 """One generic spider: every response goes through the engine; Follow Requests go back out."""
 
 import os
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -18,6 +18,7 @@ from groceries_scraper.adapter.middlewares import (
     PARENT_CAPTURE,
     REFRESH_ON,
     SESSION_NO,
+    SOURCE_FETCHED_AT,
     VARIABLES,
 )
 from groceries_scraper.adapter.pipelines import EmittedRecord
@@ -33,6 +34,7 @@ from groceries_scraper.run.health import SESSION_SETUP_FAILED
 from groceries_scraper.run.keys import RecordKeys
 from groceries_scraper.run.recording import Capture, RunRecorder
 from groceries_scraper.run.stats import RunStats
+from groceries_scraper.run.supply import SuppliedStartRequest, SupplyOutcomes
 
 _ERROR_STATUSES = list(range(400, 600))
 
@@ -71,10 +73,15 @@ class SiteSpider(scrapy.Spider):
     name = "site"  # replaced by the Site's name
 
     def __init__(
-        self, site: Site, location: Mapping[str, Any] | None = None, **kwargs: Any
+        self,
+        site: Site,
+        location: Mapping[str, Any] | None = None,
+        supply: list[SuppliedStartRequest] | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name=site.site, **kwargs)
         self.site = site
+        self._starts = self._start_requests(site, supply)
         self.env = dict(os.environ)
         self._location = location or {}
         # No Session: no Setup steps, and a refresh policy that never triggers.
@@ -90,10 +97,24 @@ class SiteSpider(scrapy.Spider):
         ]
         self._keys = RecordKeys(site.records)
 
+    @staticmethod
+    def _start_requests(
+        site: Site, supply: list[SuppliedStartRequest] | None
+    ) -> list[FollowRequest]:
+        if supply is None:
+            return [
+                FollowRequest(RenderedRequest("GET", start.url), start.page_type, {}, None)
+                for start in site.start
+            ]
+        assert site.accepts is not None  # checked before the Run starts
+        page_type = site.accepts.page_type
+        return [
+            FollowRequest(RenderedRequest("GET", s.url), page_type, {}, None, s.ref) for s in supply
+        ]
+
     async def start(self) -> AsyncIterator[scrapy.Request]:
         # Round-robin in config order, so Replay assigns Sessions identically.
-        for i, start in enumerate(self.site.start):
-            follow = FollowRequest(RenderedRequest("GET", start.url), start.page_type, {}, None)
+        for i, follow in enumerate(self._starts):
             if request := self._assign(follow, self._sessions[i % len(self._sessions)]):
                 yield request
         for session in self._sessions:
@@ -136,7 +157,8 @@ class SiteSpider(scrapy.Spider):
                 PARENT_CAPTURE: follow.parent_ref,
                 **self._render_meta(follow.page_type),
             },
-            dont_filter=retry,  # the dupe filter saw the original
+            # The dupe filter saw the original; two refs may supply the same URL.
+            dont_filter=retry or follow.supplied_ref is not None,
         )
 
     def _render_meta(self, page_type: str) -> dict[str, Any]:
@@ -171,8 +193,10 @@ class SiteSpider(scrapy.Spider):
                 parent_ref=capture_no,
             )
         except ValueError as exc:
-            self._recorder.record(capture, {"error": f"{type(exc).__name__}: {exc}"})
+            error = f"{type(exc).__name__}: {exc}"
+            self._recorder.record(capture, {"error": error})
             self.logger.error("Extraction failed for %s: %s", response.url, exc)
+            self._outcome(follow, lambda outcomes, ref: outcomes.failed(ref, error))
             return
         extraction = self._keys.filter(result.extraction, capture_no)
         self._recorder.record(
@@ -186,9 +210,20 @@ class SiteSpider(scrapy.Spider):
         )
         for dropped in extraction.dropped:
             self._stats.add_dropped(dropped)
+        ref = follow.supplied_ref
+        # A Replay keeps the source Run's time: that's when the product was seen.
+        scraped_at = (
+            response.meta.get(SOURCE_FETCHED_AT)
+            or capture.meta["response"]["timing"]["finished_at"]
+            if ref is not None
+            else None
+        )
         for record in extraction.records:
             self._stats.add_extracted()
-            yield EmittedRecord(record, response.url, capture_no)
+            yield EmittedRecord(record, response.url, capture_no, ref, scraped_at)
+        if not extraction.records:
+            error = "; ".join(d.reason for d in extraction.dropped) or "no Record extracted"
+            self._outcome(follow, lambda outcomes, ref: outcomes.failed(ref, error))
         for request in result.follow.requests:
             yield self._request(request, session)
 
@@ -209,6 +244,7 @@ class SiteSpider(scrapy.Spider):
             yield self._request(follow.with_session(session.variables), session, retry=True)
         elif action is RefreshAction.LOST:
             self._stats.add_request_failed("Session lost")
+            self._outcome(follow, lambda outcomes, ref: outcomes.failed(ref, "Session lost"))
         else:
             self.logger.error(
                 "HTTP %d from %s: max_refresh (%d) reached; dropping the request",
@@ -218,19 +254,35 @@ class SiteSpider(scrapy.Spider):
             )
             self._inc_stat("session/refresh_exhausted")
             self._stats.add_request_failed(f"HTTP {response.status}")
+            status = response.status
+            self._outcome(follow, lambda outcomes, ref: outcomes.http_error(ref, status))
             yield from self._lose(session, "max_refresh reached")
 
     def _on_error(self, failure: Failure) -> None:
         """A page request's final failure, after Scrapy's retries."""
         request = failure.request  # type: ignore[attr-defined]  # set by Scrapy for errbacks
+        follow: FollowRequest = request.cb_kwargs["follow"]
         error = failure.value
         if isinstance(error, HttpError):
             status = error.response.status
             self.logger.info("HTTP %d from %s: not handled", status, request.url)
             self._stats.add_request_failed(f"HTTP {status}")
-        elif not isinstance(error, IgnoreRequest):  # e.g. robots.txt: never sent
-            self.logger.error("Request to %s failed: %s", request.url, failure.getErrorMessage())
+            self._outcome(follow, lambda outcomes, ref: outcomes.http_error(ref, status))
+        elif isinstance(error, IgnoreRequest):  # e.g. robots.txt: never sent
+            self._outcome(follow, lambda outcomes, ref: outcomes.skipped(ref))
+        else:
+            message = failure.getErrorMessage()
+            self.logger.error("Request to %s failed: %s", request.url, message)
             self._stats.add_request_failed(type(error).__name__)
+            reason = f"{type(error).__name__}: {message}"
+            self._outcome(follow, lambda outcomes, ref: outcomes.failed(ref, reason))
+
+    def _outcome(
+        self, follow: FollowRequest, report: Callable[[SupplyOutcomes, str], None]
+    ) -> None:
+        outcomes = self._recorder.outcomes
+        if outcomes is not None and follow.supplied_ref is not None:
+            report(outcomes, follow.supplied_ref)
 
     # --- Session Setup -------------------------------------------------------
 
@@ -315,8 +367,9 @@ class SiteSpider(scrapy.Spider):
         self._inc_stat("session/lost")
         self._stats.add_session_lost()
         # Follow-on requests keep their Session, so its pending retries go with it.
-        for _ in session.retries:
+        for follow in session.retries:
             self._stats.add_request_failed("Session lost")
+            self._outcome(follow, lambda outcomes, ref: outcomes.failed(ref, "Session lost"))
         session.retries = []
         remaining = [other for other in self._sessions if not other.lost]
         if not remaining:

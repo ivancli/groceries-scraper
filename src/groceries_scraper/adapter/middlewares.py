@@ -8,8 +8,12 @@ from typing import Any, Self
 
 from scrapy import Request
 from scrapy.crawler import Crawler
+from scrapy.downloadermiddlewares.robotstxt import RobotsTxtMiddleware
 from scrapy.http import Response
 from scrapy.http.headers import Headers
+from scrapy.robotstxt import RobotParser
+from scrapy.utils.httpobj import urlparse_cached
+from twisted.internet.defer import Deferred
 
 from groceries_scraper.adapter.fingerprint import request_fingerprint
 from groceries_scraper.adapter.settings import RECORDER
@@ -22,6 +26,7 @@ VARIABLES = "groceries_variables"
 PARENT_CAPTURE = "groceries_parent_capture"
 CAPTURE = "groceries_capture"
 SESSION_NO = "groceries_session_no"  # Session Setup requests, when the pool has several
+SOURCE_FETCHED_AT = "groceries_source_fetched_at"  # Replay: when the source Run fetched it
 # scrapy-playwright's own key: its download handler renders requests carrying it.
 BROWSER = "playwright"
 _STARTED = "groceries_capture_started"
@@ -103,3 +108,16 @@ class RefreshStatusMiddleware:
         if response.status in request.meta.get(REFRESH_ON, ()):
             request.meta["dont_retry"] = True
         return response
+
+
+class SharedRobotsTxtMiddleware(RobotsTxtMiddleware):
+    """Scrapy's awaits one shared Deferred per host, but awaiting it resets its result to None.
+
+    So the second request queued behind the robots.txt download read "no robots.txt" and was
+    sent; reading the parser back after the wait gives every request the real one.
+    """
+
+    async def robot_parser(self, request: Request) -> RobotParser | None:
+        await super().robot_parser(request)
+        parser = self._parsers[urlparse_cached(request).netloc]
+        return None if isinstance(parser, Deferred) else parser
