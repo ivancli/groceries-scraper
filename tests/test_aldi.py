@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -48,3 +49,13 @@ def test_aldi_listing_stops_when_there_is_no_next_page() -> None:
         PipeContext(url="https://www.aldi.com.au/products?page=3"),
     )
     assert result.follow.requests == []
+
+
+def test_aldi_picks_accepts_product_urls_every_30_minutes() -> None:
+    site, _ = load_checked_site(ROOT / "sites" / "aldi_picks.yaml")
+
+    assert site.schedule is not None and site.schedule.every == timedelta(minutes=30)
+    assert site.accepts is not None
+    assert site.accepts.matches("https://www.aldi.com.au/product/x-000000000000282420")
+    assert not site.accepts.matches("https://www.aldi.com.au/products")
+    assert "unit_price_text" in site.page_types["product"].fields

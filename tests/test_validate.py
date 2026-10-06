@@ -4,7 +4,14 @@ from typing import Any
 import pytest
 import yaml
 
-from groceries_scraper.config import ConfigError, Findings, check_site, parse_site
+from groceries_scraper.config import (
+    ConfigError,
+    Findings,
+    Site,
+    check_site,
+    check_sites,
+    parse_site,
+)
 
 DEFAULTS = yaml.safe_load((Path(__file__).parents[1] / "defaults.yaml").read_text())
 
@@ -611,13 +618,30 @@ def test_a_session_pool_larger_than_the_start_requests_is_a_warning() -> None:
 # --- Accepts Rule -------------------------------------------------------------
 
 PRODUCT_URL = "https://x.example/p/1"
+PRICE_FIELDS: dict[str, Any] = {
+    "url": {"css": "link::attr(href)", "type": "string", "required": True},
+    "name": {"css": "h1::text", "type": "string", "required": True},
+    "price": {"css": ".price::text", "type": "number", "required": True},
+}
+ACCEPTS: dict[str, Any] = {
+    "page_type": "product",
+    "url": "^https://x\\.example/p/",
+    "examples": [PRODUCT_URL],
+}
 
 
-def _accepting(url: str = "^https://x\\.example/p/", **page: Any) -> list[str]:
-    page_types = {"listing": {}, "product": {"record": "product", **page}}
-    accepts = {"page_type": "product", "url": url, "examples": [PRODUCT_URL]}
+def _accepting(
+    url: str = "^https://x\\.example/p/",
+    *,
+    examples: list[str] | None = None,
+    fields: dict[str, Any] = PRICE_FIELDS,
+    schedule: dict[str, Any] | None = None,
+    **page: Any,
+) -> list[str]:
+    page_types = {"listing": {}, "product": {"record": "product", "fields": fields, **page}}
+    accepts = {**ACCEPTS, "url": url, "examples": examples or [PRODUCT_URL]}
     try:
-        return _errors(page_types, accepts=accepts)
+        return _errors(page_types, accepts=accepts, schedule=schedule or {"every": "30m"})
     except ConfigError as exc:  # the pattern itself is checked by the schema
         return exc.errors
 
@@ -678,15 +702,7 @@ def test_the_accepts_pattern_must_compile() -> None:
 
 
 def test_every_accepts_example_must_match_the_pattern() -> None:
-    errors = _errors(
-        {"product": {"record": "product"}},
-        start=[{"url": PRODUCT_URL, "page_type": "product"}],
-        accepts={
-            "page_type": "product",
-            "url": "^https://x\\.example/p/",
-            "examples": [PRODUCT_URL, "https://x.example/c/dairy"],
-        },
-    )
+    errors = _accepting(examples=[PRODUCT_URL, "https://x.example/c/dairy"])
 
     assert errors == [
         "accepts.examples[1]: `https://x.example/c/dairy` does not match `accepts.url`"
@@ -694,16 +710,172 @@ def test_every_accepts_example_must_match_the_pattern() -> None:
 
 
 def test_accepts_classes_match_ascii_only_as_in_javascript() -> None:
-    errors = _errors(
-        {"product": {"record": "product"}},
-        start=[{"url": PRODUCT_URL, "page_type": "product"}],
-        accepts={
-            "page_type": "product",
-            "url": "^https://x\\.example/p/\\d+$",
-            "examples": [PRODUCT_URL, "https://x.example/p/\u0661"],
-        },
+    errors = _accepting(
+        "^https://x\\.example/p/\\d+$", examples=[PRODUCT_URL, "https://x.example/p/\u0661"]
     )
 
     assert errors == [
         "accepts.examples[1]: `https://x.example/p/\u0661` does not match `accepts.url`"
+    ]
+
+
+# --- Schedule -------------------------------------------------------------------
+
+
+def test_an_accepts_rule_needs_a_schedule() -> None:
+    page_types = {"listing": {}, "product": {"record": "product", "fields": PRICE_FIELDS}}
+
+    assert _errors(page_types, accepts=ACCEPTS) == [
+        "accepts: a Site with an Accepts Rule needs a `schedule`"
+    ]
+
+
+def test_a_schedule_needs_an_accepts_rule() -> None:
+    assert _errors({"listing": {}}, schedule={"every": "30m"}) == [
+        "schedule: a Site with a Schedule needs `accepts`; "
+        "the Dispatcher only schedules Supplied Start Requests"
+    ]
+
+
+def test_a_paused_schedule_is_valid() -> None:
+    assert _accepting(schedule={"every": "1h", "enabled": False}) == []
+
+
+def test_a_schedule_below_the_global_minimum_is_an_error() -> None:
+    assert _accepting(schedule={"every": "5m"}) == [
+        "schedule.every: `5m` is below the minimum of `15m` (`schedule.min_every` in defaults.yaml)"
+    ]
+
+
+def test_a_schedule_at_the_global_minimum_is_valid() -> None:
+    assert _accepting(schedule={"every": "15m"}) == []
+
+
+@pytest.mark.parametrize("every", ["30", "30 minutes", "1.5h", "0m", "m"])
+def test_a_schedule_interval_is_a_whole_number_of_units(every: str) -> None:
+    assert _accepting(schedule={"every": every}) == [
+        f"schedule.every: `{every}` is not a duration like `30m`, `2h` or `1d`"
+    ]
+
+
+# --- Price Record contract -------------------------------------------------------
+
+
+def test_the_accepted_page_type_must_emit_records() -> None:
+    page_types = {"listing": {}, "product": {"fields": PRICE_FIELDS}}
+
+    assert _errors(page_types, accepts=ACCEPTS, schedule={"every": "30m"}) == [
+        "accepts.page_type: Page Type `product` emits no Records; "
+        "an accepting Site's Records must match the Price Record contract"
+    ]
+
+
+def test_a_price_record_needs_the_required_fields() -> None:
+    fields = {k: v for k, v in PRICE_FIELDS.items() if k != "price"}
+
+    assert _accepting(fields=fields) == [
+        "page_types.product.fields.price: missing; the Price Record contract requires it"
+    ]
+
+
+def test_price_record_fields_must_be_required_when_the_contract_requires_them() -> None:
+    fields = {**PRICE_FIELDS, "price": {**PRICE_FIELDS["price"], "required": False}}
+
+    assert _accepting(fields=fields) == [
+        "page_types.product.fields.price: the Price Record contract requires `required: true`"
+    ]
+
+
+def test_price_record_fields_must_have_the_contract_type() -> None:
+    fields = {**PRICE_FIELDS, "price": {**PRICE_FIELDS["price"], "type": "string"}}
+
+    assert _accepting(fields=fields) == [
+        "page_types.product.fields.price: type `string`, "
+        "but the Price Record contract says `number`"
+    ]
+
+
+def test_optional_price_record_fields_are_type_checked_when_present() -> None:
+    fields = {
+        **PRICE_FIELDS,
+        "is_deal": {"css": ".deal::text", "type": "string"},
+        "unit_price_text": {"css": ".unit::text"},
+    }
+
+    assert _accepting(fields=fields) == [
+        "page_types.product.fields.is_deal: type `string`, "
+        "but the Price Record contract says `boolean`",
+        "page_types.product.fields.unit_price_text: "
+        "no type; add `type: string` to match the Price Record contract",
+    ]
+
+
+def test_a_price_record_may_have_every_optional_field_and_others() -> None:
+    fields = {
+        **PRICE_FIELDS,
+        **{
+            name: {"css": f".{name}::text", "type": "string"}
+            for name in (
+                "brand",
+                "size",
+                "unit_basis",
+                "unit_price_text",
+                "price_kind",
+                "availability",
+                "promo_text",
+                "currency",
+            )
+        },
+        **{
+            name: {"css": f".{name}::text", "type": "number"}
+            for name in ("regular_price", "unit_price")
+        },
+        **{
+            name: {"css": f".{name}::text", "type": "boolean"}
+            for name in ("is_deal", "store_verified")
+        },
+    }
+
+    assert _accepting(fields=fields) == []
+
+
+# --- Location labels -------------------------------------------------------------
+
+
+def test_a_location_label_is_display_text() -> None:
+    locations = {"syd": {"label": "Sydney G412"}, "melb": {"label": 3000}}
+
+    with pytest.raises(ConfigError) as exc:
+        _check({"listing": {}}, locations=locations)
+
+    assert exc.value.errors == ["locations: Location `melb` has a non-string `label`"]
+
+
+# --- Sites claiming one another's URLs ---------------------------------------------
+
+
+def _accepting_site(name: str, url: str, *examples: str) -> Site:
+    data = {
+        "site": name,
+        "start": [{"url": examples[0], "page_type": "product"}],
+        "records": {"product": {}},
+        "schedule": {"every": "30m"},
+        "accepts": {"page_type": "product", "url": url, "examples": list(examples)},
+        "page_types": {"product": {"record": "product", "fields": PRICE_FIELDS}},
+    }
+    return parse_site(data, DEFAULTS)
+
+
+def test_sites_must_not_accept_one_anothers_examples() -> None:
+    sites = {
+        "a.yaml": _accepting_site("a", "^https://x\\.example/", "https://x.example/p/1"),
+        "b.yaml": _accepting_site("b", "^https://x\\.example/p/", "https://x.example/p/2"),
+        "c.yaml": _accepting_site("c", "^https://y\\.example/", "https://y.example/p/1"),
+    }
+
+    assert check_sites(sites) == [
+        "a.yaml: accepts.examples[0]: `https://x.example/p/1` "
+        "is also accepted by Site `b` (b.yaml)",
+        "b.yaml: accepts.examples[0]: `https://x.example/p/2` "
+        "is also accepted by Site `a` (a.yaml)",
     ]

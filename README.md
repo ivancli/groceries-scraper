@@ -207,8 +207,8 @@ The `runs` mount keeps the Run on the host. It must be writable by the image's u
 (UID 10001), or pass `--user "$(id -u)"` to write as yourself. Site configs are baked in,
 so rebuild after editing them, or mount `-v "$PWD/sites:/app/sites:ro"`.
 
-CI builds the image on every pull request and checks it offline: `validate` for every
-Site and a Replay of the ALDI Golden Fixture. On `main` it pushes
+CI builds the image on every pull request and checks it offline: `validate sites/` (every
+Site, and no two accepting the same URL) and a Replay of the ALDI Golden Fixture. On `main` it pushes
 `ghcr.io/ivancli/groceries-scraper:<sha>` and `:main`.
 
 ## Run as a Job on a local k3d cluster

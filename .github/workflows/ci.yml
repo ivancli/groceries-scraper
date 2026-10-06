@@ -55,8 +55,7 @@ jobs:
       # Offline, so the checks below can't flake on a retailer or pass by fetching.
       - name: Validates every baked-in Site config
         run: >-
-          docker run --rm --network none --entrypoint sh "$IMAGE"
-          -c 'for f in sites/*.yaml; do scrape validate "$f" || exit 1; done'
+          docker run --rm --network none "$IMAGE" validate sites/
       - name: Replays a Golden Fixture
         run: >-
           docker run --rm --network none -v "$PWD/tests/sites/aldi:/fixture:ro" "$IMAGE"

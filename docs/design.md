@@ -161,7 +161,8 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 - `locations:` maps a name (letters, digits, `_`, `-`) to that Location's Variables, read as
   `location.*` (fixed for the Run). A Site without it has one implicit Location, `default`,
   with no Variables. Validation requires every `location.*` reference to be set by every
-  declared Location.
+  declared Location. A string `label` is the tracker's display name for the
+  Location (e.g. `sydney_g412: {label: "Sydney G412", service_point: G412}`).
 - `scrape run --location <name>` picks the Run's Location; it is required when the Site
   declares any, and an unknown name is an error listing the declared ones. Running every
   Location means one Run each, left to the scheduler (ADR-0002).
@@ -198,6 +199,7 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   ([ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md)):
 
   ```yaml
+  schedule: {every: 30m}                        # `enabled: false` pauses the Site
   accepts:
     page_type: product                          # must have no Follow Rules
     url: '^https://shop\.example/product/'      # Python/JavaScript-shared regex subset
@@ -210,6 +212,16 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
   `\d`/`\w`, as JavaScript does. Every example must match. The accepted Page Type must not
   follow links, so a supplied URL never turns into a crawl; it is reachable like a Start
   Request's Page Type, and gets no Variables.
+- A Site has `accepts` exactly when it has a `schedule`. `every` is a whole number of `s`,
+  `m`, `h` or `d`, at least `defaults.yaml` `schedule.min_every` (15m); the Dispatcher
+  checks each supplied product no more often than that.
+- The accepted Page Type's Records must match the **Price Record contract**, which the
+  Dispatcher reads: `url`, `name` (string) and `price` (number, dollars) declared with
+  `required: true`; optionally `brand`, `size`, `unit_basis`, `unit_price_text`,
+  `price_kind`, `availability`, `promo_text` (string), `regular_price`, `unit_price`
+  (number), `is_deal`, `store_verified` (boolean). Other Fields are allowed and ignored.
+- `scrape validate sites/` validates every `*.yaml` in the directory, then rejects two
+  Sites accepting one another's `examples`: regex overlap can't be decided in general.
 - `scrape run --supply FILE` reads JSONL `{"ref": …, "url": …}` and requests those URLs
   instead of `start:`, each at the accepted Page Type. Refs and URLs must be unique, and
   URLs free of whitespace (Python's `$` matches before a trailing newline). A URL the

@@ -4,8 +4,9 @@ from typing import Any
 
 import yaml
 from pydantic import ValidationError
+from pydantic_core import PydanticCustomError
 
-from groceries_scraper.config.models import Site
+from groceries_scraper.config.models import MIN_EVERY, Site, parse_duration
 from groceries_scraper.config.semantics import Findings, check_site
 
 # src/groceries_scraper/config/loader.py -> repo root; the project runs from a checkout.
@@ -44,12 +45,22 @@ def checked_site(data: Any, defaults: Any, source: str = "<site>") -> tuple[Site
 
 
 def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
+    """`defaults` is defaults.yaml: Settings, plus `schedule.min_every`."""
+    context = {}
+    if isinstance(defaults, Mapping):
+        defaults = dict(defaults)
+        if (min_every := (defaults.pop("schedule", None) or {}).get(MIN_EVERY)) is not None:
+            try:
+                context[MIN_EVERY] = parse_duration(min_every)
+            except PydanticCustomError as exc:
+                message = f"defaults schedule.{MIN_EVERY}: {exc.message()}"
+                raise ConfigError(source, Findings([message])) from None
     if isinstance(data, Mapping):
         settings = data.get("settings", {})
         if isinstance(defaults, Mapping) and isinstance(settings, Mapping):
             data = {**data, "settings": {**defaults, **settings}}
     try:
-        return Site.model_validate(data)
+        return Site.model_validate(data, context=context)
     except ValidationError as exc:
         errors = [f"{_yaml_path(e['loc'])}: {e['msg']}" for e in exc.errors()]
         raise ConfigError(source, Findings(errors)) from None

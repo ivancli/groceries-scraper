@@ -76,6 +76,57 @@ def test_validate_exits_non_zero_on_a_schema_error(tmp_path: Path) -> None:
     assert "start: List should have at least 1 item" in result.stderr
 
 
+def test_validate_passes_every_site_in_the_repo() -> None:
+    result = CliRunner().invoke(app, ["validate", str(ROOT / "sites")])
+
+    assert result.exit_code == 0, result.output
+    assert "aldi_picks.yaml is valid" in result.stdout
+
+
+ACCEPTING_SITE = """
+site: {name}
+schedule: {{every: 30m}}
+accepts: {{page_type: product, url: '{pattern}', examples: ['{example}']}}
+records: {{product: {{}}}}
+start: [{{url: '{example}', page_type: product}}]
+page_types:
+  product:
+    record: product
+    fields:
+      url: {{css: "link::attr(href)", type: string, required: true}}
+      name: {{css: "h1::text", type: string, required: true}}
+      price: {{css: ".price::text", type: number, required: true}}
+"""
+
+
+def test_validate_a_directory_reports_every_invalid_site_and_overlapping_accepts(
+    tmp_path: Path,
+) -> None:
+    sites = {
+        "a": ("^https://x\\.example/", "https://x.example/p/1"),
+        "b": ("^https://x\\.example/p/", "https://x.example/p/2"),
+        "c": ("^https://y\\.example/", "https://y.example/p/1"),
+    }
+    for name, (pattern, example) in sites.items():
+        config = ACCEPTING_SITE.format(name=name, pattern=pattern, example=example)
+        (tmp_path / f"{name}.yaml").write_text(config)
+    (tmp_path / "broken.yaml").write_text("site: broken\nstart: []\npage_types: {}\n")
+
+    result = CliRunner().invoke(app, ["validate", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert f"{tmp_path / 'c.yaml'} is valid" in result.stdout
+    assert "start: List should have at least 1 item" in result.stderr
+    assert (
+        f"{tmp_path / 'a.yaml'}: accepts.examples[0]: `https://x.example/p/1` "
+        f"is also accepted by Site `b` ({tmp_path / 'b.yaml'})"
+    ) in result.stderr
+    assert (
+        f"{tmp_path / 'b.yaml'}: accepts.examples[0]: `https://x.example/p/2` "
+        f"is also accepted by Site `a` ({tmp_path / 'a.yaml'})"
+    ) in result.stderr
+
+
 def test_run_rejects_an_unknown_record_level(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["run", str(tmp_path / "site.yaml"), "--record", "unknown"])
 

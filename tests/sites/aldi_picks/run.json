@@ -1,0 +1,156 @@
+{
+  "site": "aldi_picks",
+  "run_id": "20261006T103047Z-a7a0d7",
+  "location": "default",
+  "config": {
+    "site": "aldi_picks",
+    "settings": {
+      "download_delay": 1.0,
+      "concurrent_requests_per_domain": 2,
+      "obey_robots": true,
+      "record_level": "all"
+    },
+    "records": {
+      "product": {
+        "key": [
+          "url"
+        ]
+      }
+    },
+    "health": {
+      "min_records": {
+        "product": 1
+      },
+      "max_dropped_ratio": 0.0,
+      "max_http_error_ratio": 0.0
+    },
+    "accepts": {
+      "page_type": "product",
+      "url": "^https://www\\.aldi\\.com\\.au/product/",
+      "examples": [
+        "https://www.aldi.com.au/product/aldi-natural-walnuts-500g-000000000000282420"
+      ]
+    },
+    "schedule": {
+      "every": "30m"
+    },
+    "start": [
+      {
+        "url": "https://www.aldi.com.au/product/aldi-natural-walnuts-500g-000000000000282420",
+        "page_type": "product"
+      },
+      {
+        "url": "https://www.aldi.com.au/product/bon-appetit-chocolate-chip-brioche-milk-rolls-8-pack-280g-000000000000200998",
+        "page_type": "product"
+      }
+    ],
+    "page_types": {
+      "product": {
+        "record": "product",
+        "fields": {
+          "url": {
+            "type": "string",
+            "required": true,
+            "<pipe>": [
+              {
+                "xpath": "//link[@rel='canonical']/@href"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "required": true,
+            "<pipe>": [
+              {
+                "css": "h1.product-details__title::text"
+              }
+            ]
+          },
+          "brand": {
+            "type": "string",
+            "<pipe>": [
+              {
+                "css": "a.product-details__brand-name::text"
+              }
+            ]
+          },
+          "price": {
+            "type": "number",
+            "required": true,
+            "<pipe>": [
+              {
+                "xpath": "translate(substring-after(//span[contains(@class,'base-price__regular')]/span[1], '$'), ',', '')"
+              }
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "<pipe>": [
+              {
+                "template": "AUD"
+              }
+            ]
+          },
+          "size": {
+            "type": "string",
+            "<pipe>": [
+              {
+                "xpath": "normalize-space(substring-before(//span[@data-test='product-details__unit-of-measurement'], '('))"
+              }
+            ]
+          },
+          "unit_price_text": {
+            "type": "string",
+            "<pipe>": [
+              {
+                "xpath": "normalize-space(//span[contains(@class,'product-details__comparison-price')])"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "config_hash": "937c7ff58871dda6e4abab10705e2d8fec45f629d4254ec6912a86e67c0222a0",
+  "stats": {
+    "duration_seconds": 3.004,
+    "finish_reason": "finished",
+    "pages": {
+      "product": 2
+    },
+    "records": {
+      "product": 2
+    },
+    "dropped": {
+      "total": 0,
+      "by_reason": {}
+    },
+    "null_ratio": {
+      "product": {
+        "brand": 0.0,
+        "currency": 0.0,
+        "name": 0.0,
+        "price": 0.0,
+        "size": 0.0,
+        "unit_price_text": 0.0,
+        "url": 0.0
+      }
+    },
+    "requests": {
+      "ok": 2,
+      "failed": {},
+      "missing": 0
+    },
+    "http_status": {
+      "200": 2
+    },
+    "sessions": {
+      "pool": 1,
+      "lost": 0
+    }
+  },
+  "health": {
+    "level": "ok",
+    "breaches": []
+  }
+}

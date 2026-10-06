@@ -5,15 +5,20 @@ from __future__ import annotations
 import importlib
 import re
 from collections.abc import Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
+    PlainSerializer,
     Tag,
+    ValidationInfo,
+    field_validator,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
@@ -298,11 +303,15 @@ DEFAULT_LOCATION = "default"  # the implicit Location of a Site that declares no
 _LOCATION_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _location_names(locations: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _check_locations(locations: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     # Names become S3 path segments.
     if bad := [name for name in locations if not _LOCATION_NAME.fullmatch(name)]:
         names = ", ".join(f"`{name}`" for name in bad)
         raise _config_error(f"Location names use letters, digits, `_` and `-`: {names}")
+    # `label` is the tracker's display text for the Location.
+    for name, variables in locations.items():
+        if not isinstance(variables.get("label", ""), str):
+            raise _config_error(f"Location `{name}` has a non-string `label`")
     return locations
 
 
@@ -404,11 +413,78 @@ class AcceptsRule(_Model):
         return re.search(self.url, url, re.ASCII) is not None
 
 
+def _price_record() -> dict[str, ContractField]:
+    required: dict[str, FieldTypeName] = {"url": "string", "name": "string", "price": "number"}
+    optional: dict[str, FieldTypeName] = {
+        "brand": "string",
+        "size": "string",
+        "regular_price": "number",
+        "is_deal": "boolean",
+        "unit_price": "number",
+        "unit_basis": "string",
+        "unit_price_text": "string",
+        "price_kind": "string",
+        "availability": "string",
+        "store_verified": "boolean",
+        "promo_text": "string",
+    }
+    return {
+        **{name: ContractField(type=t, required=True) for name, t in required.items()},
+        **{name: ContractField(type=t) for name, t in optional.items()},
+    }
+
+
+# What the Dispatcher reads from an accepting Site's Records; prices are in dollars.
+PRICE_RECORD = _price_record()
+
+_DURATION = re.compile(r"([1-9][0-9]*)([smhd])")
+# Coarsest first: a duration is written in the largest unit that divides it.
+_UNITS = {
+    "d": timedelta(days=1),
+    "h": timedelta(hours=1),
+    "m": timedelta(minutes=1),
+    "s": timedelta(seconds=1),
+}
+MIN_EVERY = "min_every"  # validation context key: defaults.yaml `schedule.min_every`
+
+
+def parse_duration(value: Any) -> timedelta:
+    if not isinstance(value, str) or not (match := _DURATION.fullmatch(value)):
+        raise _config_error(f"`{value}` is not a duration like `30m`, `2h` or `1d`")
+    return int(match[1]) * _UNITS[match[2]]
+
+
+def format_duration(value: timedelta) -> str:
+    unit = next(u for u, size in _UNITS.items() if value % size == timedelta(0))
+    return f"{value // _UNITS[unit]}{unit}"
+
+
+# Written as `30m`; snapshots keep that form so Replay parses them back.
+Duration = Annotated[timedelta, BeforeValidator(parse_duration), PlainSerializer(format_duration)]
+
+
+class Schedule(_Model):
+    every: Duration
+    enabled: bool = True  # false pauses the Site
+
+    @field_validator("every")
+    @classmethod
+    def _at_least_min_every(cls, every: timedelta, info: ValidationInfo) -> timedelta:
+        # Without defaults (a Replay of a snapshot) there is no minimum to apply.
+        minimum: timedelta | None = (info.context or {}).get(MIN_EVERY)
+        if minimum is not None and every < minimum:
+            raise _config_error(
+                f"`{format_duration(every)}` is below the minimum of `{format_duration(minimum)}` "
+                "(`schedule.min_every` in defaults.yaml)"
+            )
+        return every
+
+
 class Site(_Model):
     site: str
     settings: Settings
     # Location name -> its Variables (`location.*`).
-    locations: Annotated[dict[str, dict[str, Any]], AfterValidator(_location_names)] = Field(
+    locations: Annotated[dict[str, dict[str, Any]], AfterValidator(_check_locations)] = Field(
         default_factory=dict
     )
     session: Session | None = None
@@ -416,6 +492,7 @@ class Site(_Model):
     records: dict[str, RecordType] = Field(default_factory=dict)
     health: Health = Field(default_factory=Health)
     accepts: AcceptsRule | None = None
+    schedule: Schedule | None = None
     start: Annotated[list[StartRequest], Field(min_length=1)]
     page_types: Annotated[dict[str, PageType], Field(min_length=1)]
 
