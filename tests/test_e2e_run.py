@@ -1672,6 +1672,15 @@ def test_refused_and_broken_product_pages_are_blocked_or_failed(
     assert _records(run_dir) == []
 
 
+def test_a_dispatched_run_keeps_the_run_id_it_was_given(tmp_path: Path, shop: _ShopServer) -> None:
+    run_dir, _ = _supplied(
+        tmp_path, shop, _refs(shop, "p10"), "--run-id", "20261006T120000Z-abc123"
+    )
+
+    assert run_dir.name == "20261006T120000Z-abc123"
+    assert _manifest(run_dir)["run_id"] == "20261006T120000Z-abc123"
+
+
 def _refused(tmp_path: Path, shop: _ShopServer, supply: list[dict[str, str]] | str) -> str:
     """Refused before the crawl: exit 1, no request and no Run directory."""
     _write_supplied(tmp_path, shop, supply)
@@ -1809,3 +1818,27 @@ def test_limit_does_not_apply_to_a_supplied_run(tmp_path: Path, shop: _ShopServe
     error = _refused_supply(tmp_path, shop, "--limit", "1")
 
     assert "--limit cannot be used with --supply" in error
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["--supply", "supply.jsonl", "--run-id", "../escape"], "--run-id must look like"),
+        (["--run-id", "20261006T120000Z-abc123"], "--run-id needs --supply"),
+    ],
+)
+def test_a_run_id_must_be_a_run_id_and_needs_a_supply(
+    tmp_path: Path, shop: _ShopServer, args: list[str], error: str
+) -> None:
+    _write_supplied(tmp_path, shop, _refs(shop, "p10"))
+    result = subprocess.run(
+        [str(SCRAPE), "run", "e2e.yaml", *args],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert error in result.stderr
+    assert not (tmp_path / "runs").exists()

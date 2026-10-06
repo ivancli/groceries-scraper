@@ -252,6 +252,31 @@ Archive failure, but also an uncaught error, which exits 1) fail it at once; oth
 pods don't count. `kubectl get jobs -l groceries-scraper/site=aldi` shows the outcome,
 and `k3d cluster delete groceries` removes the cluster.
 
+### Dispatch the tracker's Watch List
+
+`scrape dispatch` runs every 5 minutes as a CronJob
+([`deploy/k8s/overlays/local/dispatcher`](deploy/k8s/overlays/local/dispatcher)). Each tick
+ingests finished dispatched Runs, delivers Price Changes to the tracker, refreshes the
+Watch List, publishes the Site Catalogue, and creates one Job per due (Site, Location)
+([ADR-0005](docs/adr/0005-dispatcher-schedules-supplied-start-requests.md)). It needs the
+Postgres step above, the tracker's Cloudflare Access service token, and the Job template
+it renders from:
+
+```bash
+kubectl create secret generic scrape-dispatcher \
+  --from-literal=TRACKER_URL=https://<tracker> \
+  --from-literal=CF_ACCESS_CLIENT_ID=<id> --from-literal=CF_ACCESS_CLIENT_SECRET=<secret>
+kubectl kustomize deploy/k8s/overlays/local \
+  | kubectl create configmap scrape-job-template --from-file=job.yaml=/dev/stdin \
+      --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k deploy/k8s/overlays/local/dispatcher
+kubectl create job --from=cronjob/scrape-dispatch scrape-dispatch-now  # tick now
+```
+
+Re-run the `scrape-job-template` line after changing the local overlay. The Dispatcher's
+ServiceAccount may only create and get Jobs and ConfigMaps. Its Jobs are labelled like
+manual ones, so `kubectl get jobs -l groceries-scraper/site=aldi_picks` shows them.
+
 ### Back up and restore the cluster's Postgres
 
 This database is the system of record for price history

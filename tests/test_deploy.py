@@ -389,3 +389,58 @@ spec:
     assert job["metadata"]["generateName"] == "scrape-aldi-default-"
     container = job["spec"]["template"]["spec"]["containers"][0]
     assert container["resources"] == {"requests": {"memory": "1Gi"}, "limits": {"memory": "2Gi"}}
+
+
+def test_a_dispatched_run_mounts_its_supply_and_keeps_its_run_id() -> None:
+    config = Path(__file__).parent.parent / "sites" / "aldi_picks.yaml"
+    result = CliRunner().invoke(
+        app,
+        [
+            "deploy",
+            "job",
+            str(config),
+            "--supply",
+            "scrape-aldi-picks-default-x7k2p",
+            "--record",
+            "errors",
+            "--run-id",
+            "20261006T120000Z-abc123",
+        ],
+        input=TEMPLATE.read_text(),
+    )
+
+    assert result.exit_code == 0, result.output
+    job = yaml.safe_load(result.stdout)
+    pod = job["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    assert container["args"] == [
+        "run",
+        str(config),
+        "--location",
+        "default",
+        "--supply",
+        "/app/supply/supply.jsonl",
+        "--record",
+        "errors",
+        "--run-id",
+        "20261006T120000Z-abc123",
+    ]
+    assert {"name": "supply", "mountPath": "/app/supply", "readOnly": True} in container[
+        "volumeMounts"
+    ]
+    assert {"name": "supply", "configMap": {"name": "scrape-aldi-picks-default-x7k2p"}} in pod[
+        "volumes"
+    ]
+    # The Dispatcher retries with backoff; a second pod would reuse the Run id.
+    assert job["spec"]["backoffLimit"] == 0
+
+
+def test_a_run_id_is_only_assigned_to_a_supplied_run(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        ["deploy", "job", str(_site(tmp_path)), "--run-id", "20261006T120000Z-abc123"],
+        input=TEMPLATE.read_text(),
+    )
+
+    assert result.exit_code == 1
+    assert "--run-id needs --supply" in result.output

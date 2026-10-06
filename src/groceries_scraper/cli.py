@@ -22,7 +22,7 @@ from groceries_scraper.run.archive import (
     open_archive,
     overlapping_sinks,
 )
-from groceries_scraper.run.directory import RunDirectoryError, SavedRun
+from groceries_scraper.run.directory import RUN_ID, RunDirectoryError, SavedRun
 from groceries_scraper.run.sinks import ExportError, Sink, SinkError, export_run, open_sink
 from groceries_scraper.run.summary import RunOutcome
 from groceries_scraper.run.supply import Supply, SupplyError
@@ -45,6 +45,8 @@ LocationOption = Annotated[
     typer.Option(help="The Location to scrape; required when the Site declares any."),
 ]
 
+RecordOption = Annotated[str | None, typer.Option(help="all | errors | off")]
+
 ArchiveOption = Annotated[
     str | None,
     typer.Option(
@@ -66,6 +68,14 @@ def deploy_job(
     location: LocationOption = None,
     sink: SinkOption = None,
     archive_url: ArchiveOption = None,
+    supply: Annotated[
+        str | None,
+        typer.Option(help="ConfigMap whose `supply.jsonl` the Run is supplied with."),
+    ] = None,
+    record: RecordOption = None,
+    run_id: Annotated[
+        str | None, typer.Option(help="The supplied Run's id, assigned by the Dispatcher.")
+    ] = None,
 ) -> None:
     """Read one Job template on stdin and write the Job for this Run on stdout."""
     from groceries_scraper.deploy import DeployError, render_job
@@ -81,11 +91,68 @@ def deploy_job(
             location_name,
             sink or [],
             archive_url,
+            supply_config_map=supply,
+            record=_record_level(record),
+            run_id=run_id,
         )
     except DeployError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
     typer.echo(rendered, nl=False)
+
+
+@app.command()
+def dispatch(
+    job_template: Annotated[
+        Path,
+        typer.Option(envvar="SCRAPE_JOB_TEMPLATE", help="The Job template `deploy job` renders."),
+    ],
+    tracker_url: Annotated[
+        str, typer.Option(envvar="TRACKER_URL", help="The tracker's origin, for its Collector API.")
+    ],
+    sink: Annotated[
+        str,
+        typer.Option(
+            "--sink",
+            envvar="SCRAPE_SINK",
+            help="postgresql://… holding the Dispatcher store; dispatched Runs export there.",
+        ),
+    ],
+    sites: Annotated[Path, typer.Option(help="The Site configs to route by.")] = Path("sites"),
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Validate the outbox with the tracker and log due Jobs; change nothing.",
+        ),
+    ] = False,
+) -> None:
+    """One tick: ingest finished Runs, sync with the tracker, and create Jobs for what is due."""
+    import logging
+    from datetime import UTC, datetime
+
+    from groceries_scraper.dispatch.collector import CollectorClient
+    from groceries_scraper.dispatch.dispatcher import Dispatcher
+    from groceries_scraper.dispatch.kubernetes import KubernetesCluster
+    from groceries_scraper.dispatch.store import DispatchStore
+    from groceries_scraper.run.sinks.postgres import PostgresSink
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if not sink.startswith(("postgres://", "postgresql://")):
+        typer.echo("--sink must be a postgresql:// URL", err=True)
+        raise typer.Exit(code=1)
+    # Ingestion reads the Sink tables, which may not exist before the first Run.
+    PostgresSink(sink).prepare()
+    store = DispatchStore(sink)
+    store.prepare()
+    Dispatcher(
+        store=store,
+        collector=CollectorClient(tracker_url, store),
+        cluster=KubernetesCluster.in_cluster(),
+        sites=sites,
+        job_template=job_template.read_text(encoding="utf-8"),
+        sink_url=sink,
+    ).tick(datetime.now(UTC), dry_run=dry_run)
 
 
 @app.command()
@@ -228,6 +295,12 @@ def _report_and_exit(
     raise typer.Exit(code=ARCHIVE_FAILED if archive_failed else outcome.health.exit_code)
 
 
+def _record_level(record: str | None) -> str | None:
+    if record not in (None, "all", "errors", "off"):
+        raise typer.BadParameter("must be all, errors or off", param_hint="--record")
+    return record
+
+
 def _warn(warnings: list[str]) -> None:
     for warning in warnings:
         typer.echo(f"warning: {warning}", err=True)
@@ -237,7 +310,7 @@ def _warn(warnings: list[str]) -> None:
 def run(
     site_config: Path,
     limit: Annotated[int | None, typer.Option(min=1, help="Stop after N Records.")] = None,
-    record: Annotated[str | None, typer.Option(help="all | errors | off")] = None,
+    record: RecordOption = None,
     location: LocationOption = None,
     supply: Annotated[
         Path | None,
@@ -245,6 +318,10 @@ def run(
             help="JSONL of {ref, url} Supplied Start Requests, run instead of `start:`; "
             "writes outcomes.jsonl."
         ),
+    ] = None,
+    run_id: Annotated[
+        str | None,
+        typer.Option(help="Use this Run id, assigned by the Dispatcher; needs --supply."),
     ] = None,
     sink: RunSinkOption = None,
     archive_url: ArchiveOption = None,
@@ -256,11 +333,16 @@ def run(
         # A limit-cut ref would read as never checked; supply fewer refs instead.
         typer.echo("--limit cannot be used with --supply", err=True)
         raise typer.Exit(code=1)
+    if run_id is not None and supply is None:
+        typer.echo("--run-id needs --supply: only the Dispatcher assigns Run ids", err=True)
+        raise typer.Exit(code=1)
+    if run_id is not None and not RUN_ID.fullmatch(run_id):
+        typer.echo("--run-id must look like 20261006T120000Z-abc123", err=True)
+        raise typer.Exit(code=1)
     _refuse_overlap_or_exit(archive_url, sink)
     sinks = _open_sinks_or_exit(sink)
     archive = _open_archive_or_exit(archive_url)
-    if record not in (None, "all", "errors", "off"):
-        raise typer.BadParameter("must be all, errors or off", param_hint="--record")
+    record = _record_level(record)
     site = _load_site_or_exit(site_config)
     if record is not None:
         site = site.model_copy(
@@ -268,7 +350,7 @@ def run(
         )
     location = _location_or_exit(site, location)
     supplied = None if supply is None else _supply_or_exit(site, supply)
-    new_run = create_run(RUNS_DIR, site.site, location=location)
+    new_run = create_run(RUNS_DIR, site.site, location=location, run_id=run_id)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
     outcome = crawl(site, new_run, limit, supply=supplied)
     _report_and_exit(outcome, new_run.path, sinks, archive)

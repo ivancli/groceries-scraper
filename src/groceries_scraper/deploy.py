@@ -12,6 +12,9 @@ from groceries_scraper.config import Site
 SITE_LABEL = "groceries-scraper/site"
 LOCATION_LABEL = "groceries-scraper/location"
 SHM_VOLUME = "scrape-shm"
+SUPPLY_VOLUME = "supply"
+SUPPLY_DIR = "/app/supply"
+SUPPLY_KEY = "supply.jsonl"
 
 
 class DeployError(Exception):
@@ -25,6 +28,12 @@ class JobTemplateError(DeployError):
 
 def _dns_name(name: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
+
+
+def job_prefix(site: str, location: str) -> str:
+    # Kubernetes adds five random characters; the completed Job name must fit in 63.
+    name = f"scrape-{_dns_name(site)}-{_dns_name(location)}"
+    return name[:57].rstrip("-") + "-"
 
 
 def _mapping(parent: dict[str, Any], key: str) -> dict[str, Any]:
@@ -114,14 +123,19 @@ def render_job(
     location: str,
     sink_urls: list[str],
     archive_url: str | None,
+    *,
+    supply_config_map: str | None = None,
+    record: str | None = None,
+    run_id: str | None = None,
 ) -> str:
+    """`supply_config_map` names the ConfigMap holding the Run's `supply.jsonl`."""
+    if run_id is not None and supply_config_map is None:
+        raise DeployError("--run-id needs --supply: only the Dispatcher assigns Run ids")
     job = _read_job(template)
     _refuse_unlabelled_names(site, location)
     metadata = _mapping(job, "metadata")
     metadata.pop("name", None)
-    # Kubernetes adds five random characters; the completed Job name must fit in 63.
-    name = f"scrape-{_dns_name(site.site)}-{_dns_name(location)}"
-    metadata["generateName"] = name[:57].rstrip("-") + "-"
+    metadata["generateName"] = job_prefix(site.site, location)
     labels = {SITE_LABEL: site.site, LOCATION_LABEL: location}
     _mapping(metadata, "labels").update(labels)
     pod = job["spec"]["template"]
@@ -134,6 +148,26 @@ def render_job(
     if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
         raise JobTemplateError()
     args.extend(["run", str(site_config), "--location", location])
+    if supply_config_map is not None:
+        args.extend(["--supply", f"{SUPPLY_DIR}/{SUPPLY_KEY}"])
+        _replace_entry(
+            pod["spec"],
+            "volumes",
+            "name",
+            {"name": SUPPLY_VOLUME, "configMap": {"name": supply_config_map}},
+        )
+        _replace_entry(
+            container,
+            "volumeMounts",
+            "mountPath",
+            {"name": SUPPLY_VOLUME, "mountPath": SUPPLY_DIR, "readOnly": True},
+        )
+        # The Dispatcher retries with backoff; a second pod would reuse the Run id.
+        job["spec"]["backoffLimit"] = 0
+    if record is not None:
+        args.extend(["--record", record])
+    if run_id is not None:
+        args.extend(["--run-id", run_id])
     for url in sink_urls:
         args.extend(["--sink", url])
     if archive_url is not None:

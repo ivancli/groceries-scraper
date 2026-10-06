@@ -139,3 +139,71 @@ def test_backups_run_nightly_to_the_host_as_its_user(
     assert pod["securityContext"]["runAsUser"] == pod["securityContext"]["runAsGroup"] == 1000
     (volume,) = pod["volumes"]
     assert volume["hostPath"] == {"path": "/mnt/groceries-scraper/backups", "type": "Directory"}
+
+
+@pytest.fixture(scope="module")
+def local_dispatcher() -> dict[str, dict[str, Any]]:
+    return {doc["kind"]: doc for doc in yaml.safe_load_all(_build(LOCAL / "dispatcher"))}
+
+
+def test_the_dispatcher_ticks_every_five_minutes_one_at_a_time(
+    local_dispatcher: dict[str, dict[str, Any]],
+) -> None:
+    cron = local_dispatcher["CronJob"]
+    assert cron["spec"]["schedule"] == "*/5 * * * *"
+    assert cron["spec"]["concurrencyPolicy"] == "Forbid"
+    pod = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert pod["serviceAccountName"] == local_dispatcher["ServiceAccount"]["metadata"]["name"]
+    (container,) = pod["containers"]
+    assert container["image"] == "groceries-scraper:dev"
+    assert container["args"] == ["dispatch"]
+    assert container["envFrom"] == [
+        {"secretRef": {"name": "scrape-sinks"}},
+        {"secretRef": {"name": "scrape-dispatcher"}},
+    ]
+    mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
+    volumes = {volume["name"]: volume for volume in pod["volumes"]}
+    assert volumes["sites"]["hostPath"]["path"] == "/mnt/groceries-scraper/sites"
+    assert mounts["sites"] == "/app/sites"
+    assert volumes["job-template"]["configMap"]["name"] == "scrape-job-template"
+    env = {item["name"]: item["value"] for item in container["env"]}
+    assert env["SCRAPE_JOB_TEMPLATE"].startswith(mounts["job-template"] + "/")
+
+
+def test_the_dispatcher_may_only_create_and_get_jobs_and_config_maps(
+    local_dispatcher: dict[str, dict[str, Any]],
+) -> None:
+    role = local_dispatcher["Role"]
+    assert sorted(
+        (rule["apiGroups"], rule["resources"], sorted(rule["verbs"])) for rule in role["rules"]
+    ) == [([""], ["configmaps"], ["create", "get"]), (["batch"], ["jobs"], ["create", "get"])]
+    binding = local_dispatcher["RoleBinding"]
+    assert binding["roleRef"]["name"] == role["metadata"]["name"]
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": local_dispatcher["ServiceAccount"]["metadata"]["name"]}
+    ]
+
+
+def test_the_job_template_the_dispatcher_reads_is_the_local_job(
+    local_job: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(ROOT)
+    result = CliRunner().invoke(
+        app,
+        [
+            "deploy",
+            "job",
+            "sites/aldi_picks.yaml",
+            "--supply",
+            "cm",
+            "--run-id",
+            "20261006T120000Z-abc123",
+            "--record",
+            "errors",
+        ],
+        input=yaml.safe_dump(local_job),
+    )
+
+    assert result.exit_code == 0, result.output
+    pod = yaml.safe_load(result.stdout)["spec"]["template"]["spec"]
+    assert {"name": "supply", "configMap": {"name": "cm"}} in pod["volumes"]

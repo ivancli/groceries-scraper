@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fake_tracker import FakeTracker, serve_tracker
 
 
 @pytest.fixture
@@ -20,3 +21,8 @@ def s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         client = boto3.client("s3")
         client.create_bucket(Bucket="bucket")
         yield client
+
+
+@pytest.fixture
+def tracker(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeTracker]:
+    yield from serve_tracker(monkeypatch)
