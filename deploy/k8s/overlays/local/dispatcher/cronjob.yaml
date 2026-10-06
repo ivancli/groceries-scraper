@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scrape-dispatch
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid  # two ticks at once would both see the same refs as due
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0  # the next tick is the retry
+      activeDeadlineSeconds: 240
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: scrape-dispatcher
+          # hostPath files keep the pod's UID, so run as yours: change both if `id -u`/`id -g` aren't 1000.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dispatch
+              image: groceries-scraper
+              imagePullPolicy: Never  # imported with `k3d image import`, never pulled
+              args: [dispatch]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: HOME  # the image has no account for your UID, which leaves an unwritable /
+                  value: /tmp
+                - name: SCRAPE_JOB_TEMPLATE
+                  value: /etc/scrape/job.yaml
+              envFrom:
+                - secretRef:
+                    name: scrape-sinks  # the store, and every dispatched Run's Sink
+                - secretRef:
+                    name: scrape-dispatcher  # TRACKER_URL, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: sites
+                  mountPath: /app/sites  # route by the same configs the Jobs run
+                  readOnly: true
+                - name: job-template
+                  mountPath: /etc/scrape
+                  readOnly: true
+          volumes:
+            - name: sites
+              hostPath:
+                path: /mnt/groceries-scraper/sites
+                type: Directory
+            - name: job-template
+              configMap:
+                name: scrape-job-template

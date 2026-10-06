@@ -1,6 +1,6 @@
 # Tracker integration: tech plan
 
-Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56); Schedules, the Price Record contract and `aldi_picks` opting in (#57). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
+Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56); Schedules, the Price Record contract and `aldi_picks` opting in (#57); the Dispatcher store (#59), Collector client (#60) and `scrape dispatch` (#61). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
 
 ## Flow
 
@@ -151,6 +151,21 @@ delivery and recovery scenario.
 - `every` has passed since its last success.
 
 After a failure, the next try waits `every × 2^(n-1)`, capped at 24 hours. Due entries are grouped by (Site, Location) and chunked at 200 refs per Job.
+
+**`scrape dispatch` (#61).** `groceries_scraper.dispatch.dispatcher.Dispatcher.tick(now)`
+runs the five steps in order. In-flight means a dispatch not yet ingested. A Job that
+has finished or disappeared without an ingestable Run, or whose Run cannot be ingested,
+is abandoned: each of its refs gets a `failed` check, which feeds Check Health and
+backoff. The Dispatcher assigns the Run id (`scrape run --run-id`) and the Job name,
+records the dispatch, then creates the Job, then its ConfigMap (the pod waits for the
+volume). A Job that could not be created cancels its dispatch. Dispatched Jobs get
+`backoffLimit: 0`, since a second pod would reuse the Run id; the next tick retries
+instead. A URL repeated within one (Site, Location) waits for a later tick, because a
+Run fetches each URL once. Unroutable entries are reported through
+`DispatchStore.report_outcome`, once per distinct outcome. `--dry-run` posts the outbox
+with `?dry_run=1`, logs the Jobs it would create, and changes nothing else.
+`tests/test_dispatch.py` drives ticks on a fake clock against disposable Postgres, the
+fake tracker and an in-memory cluster.
 
 **Kubernetes.**
 - Each Job's supply lives in a ConfigMap, with an `ownerReference` to the Job so they're cleaned up together.

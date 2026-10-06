@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,14 @@ def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
     except ValidationError as exc:
         errors = [f"{_yaml_path(e['loc'])}: {e['msg']}" for e in exc.errors()]
         raise ConfigError(source, Findings(errors)) from None
+
+
+def load_min_every(defaults_path: Path = DEFAULTS_PATH) -> timedelta:
+    """defaults.yaml `schedule.min_every`; none means no minimum."""
+    defaults = _read_yaml(defaults_path)
+    schedule = defaults.get("schedule") if isinstance(defaults, Mapping) else None
+    min_every = (schedule or {}).get(MIN_EVERY)
+    return timedelta(0) if min_every is None else parse_duration(min_every)
 
 
 def _read_yaml(path: Path) -> Any:

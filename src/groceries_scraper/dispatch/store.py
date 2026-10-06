@@ -38,6 +38,22 @@ class PendingItem:
 
 
 @dataclass(frozen=True)
+class Dispatched:
+    site: str
+    run_id: str
+    location: str
+    job_name: str
+    refs: list[str]
+
+
+@dataclass(frozen=True)
+class RefState:
+    last_attempt_at: datetime | None
+    last_success_at: datetime | None
+    consecutive_failures: int
+
+
+@dataclass(frozen=True)
 class DispatchStore:
     dsn: str = field(repr=False)
 
@@ -131,6 +147,57 @@ class DispatchStore:
                 " VALUES (%s, %s, %s, %s, %s, %s)",
                 (site, location, run_id, job_name, refs, created_at),
             )
+
+    def cancel_dispatch(self, site: str, run_id: str) -> None:
+        """For a Job that was never created."""
+        with psycopg.connect(self.dsn) as connection:
+            connection.execute(
+                "DELETE FROM dispatch.dispatches"
+                " WHERE site = %s AND run_id = %s AND ingested_at IS NULL",
+                (site, run_id),
+            )
+
+    def in_flight(self) -> list[Dispatched]:
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            rows = connection.execute(
+                "SELECT site, run_id, location, job_name, refs FROM dispatch.dispatches"
+                " WHERE ingested_at IS NULL ORDER BY created_at, job_name"
+            ).fetchall()
+            return [Dispatched(**row) for row in rows]
+
+    def ref_states(self) -> dict[str, RefState]:
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            rows = connection.execute(
+                "SELECT ref, last_attempt_at, last_success_at, consecutive_failures"
+                " FROM dispatch.latest_state"
+            ).fetchall()
+            return {row.pop("ref"): RefState(**row) for row in rows}
+
+    def report_outcome(
+        self, site: str | None, location: str | None, ref: str, outcome: str, at: datetime
+    ) -> None:
+        """An entry the Dispatcher could not route; reported once per distinct outcome."""
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            _report_outcome(connection, site, location, ref, outcome, at)
+
+    def abandon(self, site: str, run_id: str, error: str, at: datetime) -> bool:
+        """A Job that ended without an ingestable Run fails each of its refs at `at`."""
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            dispatched = connection.execute(
+                "SELECT * FROM dispatch.dispatches WHERE site = %s AND run_id = %s FOR UPDATE",
+                (site, run_id),
+            ).fetchone()
+            if dispatched is None or dispatched["ingested_at"] is not None:
+                return False
+            for ref in dispatched["refs"]:
+                outcome = {"ref": ref, "outcome": "failed", "error": error, "at": at}
+                self._check(connection, dispatched, outcome, None)
+            connection.execute(
+                "UPDATE dispatch.dispatches SET finished_at = %s, ingested_at = now()"
+                " WHERE site = %s AND run_id = %s",
+                (at, site, run_id),
+            )
+            return True
 
     def ingest(self, site: str, run_id: str) -> bool:
         """Returns false until exported, or for an unregistered/already ingested Run."""
@@ -289,15 +356,8 @@ class DispatchStore:
                 " SET state_hash = %s, last_success_at = %s WHERE ref = %s",
                 (state_hash, at, ref),
             )
-        elif result in TRACKER_OUTCOMES and result not in latest["reported_outcomes"]:
-            _enqueue(
-                connection, "outcome", site, location, ref, at, {"at": _iso(at), "outcome": result}
-            )
-            connection.execute(
-                "UPDATE dispatch.latest_state"
-                " SET reported_outcomes = array_append(reported_outcomes, %s) WHERE ref = %s",
-                (result, ref),
-            )
+        elif result in TRACKER_OUTCOMES:
+            _report_outcome(connection, site, location, ref, result, at)
         if newest_attempt:
             connection.execute(
                 "UPDATE dispatch.latest_state SET last_attempt_at = %s, health = %s,"
@@ -341,6 +401,31 @@ class DispatchStore:
         )
 
 
+def _report_outcome(
+    connection: psycopg.Connection[dict[str, Any]],
+    site: str | None,
+    location: str | None,
+    ref: str,
+    outcome: str,
+    at: datetime,
+) -> None:
+    connection.execute(
+        "INSERT INTO dispatch.latest_state (ref) VALUES (%s) ON CONFLICT DO NOTHING", (ref,)
+    )
+    reported = connection.execute(
+        "SELECT reported_outcomes FROM dispatch.latest_state WHERE ref = %s FOR UPDATE", (ref,)
+    ).fetchone()
+    assert reported is not None
+    if outcome in reported["reported_outcomes"]:
+        return
+    _enqueue(connection, "outcome", site, location, ref, at, {"at": _iso(at), "outcome": outcome})
+    connection.execute(
+        "UPDATE dispatch.latest_state"
+        " SET reported_outcomes = array_append(reported_outcomes, %s) WHERE ref = %s",
+        (outcome, ref),
+    )
+
+
 def _save_collector_state(connection: psycopg.Connection[Any], key: str, value: str) -> None:
     connection.execute(
         "INSERT INTO dispatch.collector_state (key, value) VALUES (%s, %s)"
@@ -380,8 +465,8 @@ def _iso(at: datetime) -> str:
 def _enqueue(
     connection: psycopg.Connection[dict[str, Any]],
     kind: str,
-    site: str,
-    location: str,
+    site: str | None,
+    location: str | None,
     ref: str,
     at: datetime,
     payload: dict[str, Any],

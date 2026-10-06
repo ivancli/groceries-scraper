@@ -1,6 +1,7 @@
 """A Run's identity and output directory: `runs/<site>/<run_id>/`."""
 
 import json
+import re
 import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -22,12 +23,25 @@ class Run:
     location: str = DEFAULT_LOCATION
 
 
-def create_run(
-    root: Path, site: str, now: datetime | None = None, *, location: str = DEFAULT_LOCATION
-) -> Run:
+RUN_ID = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
+
+
+def new_run_id(now: datetime | None = None) -> str:
     """Run ids sort by start time; the random suffix keeps same-second Runs apart."""
     started = (now or datetime.now(UTC)).astimezone(UTC)
-    run_id = f"{started:%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
+    return f"{started:%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
+
+
+def create_run(
+    root: Path,
+    site: str,
+    now: datetime | None = None,
+    *,
+    location: str = DEFAULT_LOCATION,
+    run_id: str | None = None,
+) -> Run:
+    """`run_id` is one the Dispatcher assigned (`new_run_id`) before the Run started."""
+    run_id = run_id or new_run_id(now)
     path = root / site / run_id
     path.mkdir(parents=True)
     return Run(site, run_id, path, location)
