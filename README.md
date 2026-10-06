@@ -226,10 +226,10 @@ k3d cluster create groceries \
   -v "$PWD/sites:/mnt/groceries-scraper/sites@all"
 docker build -t groceries-scraper:dev .
 k3d image import groceries-scraper:dev -c groceries
-kubectl kustomize deploy/k8s/overlays/local \
+job=$(kubectl kustomize deploy/k8s/overlays/local \
   | uv run scrape deploy job sites/aldi.yaml \
-  | kubectl create -f -
-kubectl logs -f -l groceries-scraper/site=aldi
+  | kubectl create -f - -o name)
+kubectl logs -f "$job" --pod-running-timeout=2m
 ```
 
 The Run directory appears as `runs/aldi/<run_id>/`, ready for `scrape inspect` and
@@ -241,7 +241,7 @@ Sink credentials such as `PGPASSWORD` come from an optional `scrape-sinks` Secre
 The local overlay makes no Archive.
 
 The Job succeeds only for an `ok` Run. Exit codes 1–4 (degraded, failed, Sink or
-Archive failure) fail it at once; other pod failures retry up to twice, and evicted
+Archive failure, but also an uncaught error, which exits 1) fail it at once; other pod failures retry up to twice, and evicted
 pods don't count. `kubectl get jobs -l groceries-scraper/site=aldi` shows the outcome,
 and `k3d cluster delete groceries` removes the cluster.
 

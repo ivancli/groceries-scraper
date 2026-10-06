@@ -59,7 +59,6 @@ def test_local_job_runs_the_dev_image_as_a_non_root_host_user(local_job: dict[st
     assert pod["securityContext"]["runAsNonRoot"] is True
     assert pod["securityContext"]["runAsUser"] == 1000
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
-    # The image has no account for the host UID, which would leave HOME at an unwritable /.
     assert {"name": "HOME", "value": "/tmp"} in container["env"]
 
 
@@ -72,7 +71,6 @@ def test_local_job_mounts_the_repos_runs_and_sites(local_job: dict[str, Any]) ->
     }
     volumes = {v["name"]: v for v in pod["volumes"]}
     mounted = {m["mountPath"]: volumes[m["name"]] for m in container["volumeMounts"]}
-    # A volume with two sources is rejected by the API server, so the base's emptyDir must go.
     assert mounted["/app/runs"] == {
         "name": "runs",
         "hostPath": {"path": "/mnt/groceries-scraper/runs", "type": "Directory"},

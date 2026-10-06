@@ -1,5 +1,4 @@
-# A k3d cluster whose node maps the repo's runs/ and sites/ (see README), so a Job's Run
-# lands in ./runs and edited Site configs apply without rebuilding the image. No Archive.
+# For a k3d cluster created with the README's runs/ and sites/ mappings.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
