@@ -1,11 +1,9 @@
 """`scrape dispatch`: one idempotent tick from the Watch List to Kubernetes Jobs."""
 
-import json
 import logging
 import secrets
 import string
-from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -15,21 +13,22 @@ import yaml
 from groceries_scraper.config import Site, load_checked_site
 from groceries_scraper.config.loader import DEFAULTS_PATH, load_min_every
 from groceries_scraper.config.models import DEFAULT_LOCATION
-from groceries_scraper.deploy import SUPPLY_KEY, job_prefix, render_job
+from groceries_scraper.deploy import job_prefix, render_job, supply_config_map
 from groceries_scraper.dispatch.collector import CollectorClient
 from groceries_scraper.dispatch.store import DispatchStore, RefState
 from groceries_scraper.run.directory import new_run_id
+from groceries_scraper.run.supply import SuppliedStartRequest, Supply
 
 logger = logging.getLogger(__name__)
 
-JOB_REFS = 200
+MAX_REFS_PER_JOB = 200
 MAX_BACKOFF = timedelta(hours=24)
 JobStatus = Literal["running", "finished", "missing"]
 
 
 class Cluster(Protocol):
     def create_job(self, job: dict[str, Any]) -> str:
-        """Returns the created Job's uid."""
+        """The uid, which the supply ConfigMap's ownerReference needs."""
         ...
 
     def create_config_map(self, config_map: dict[str, Any]) -> None: ...
@@ -43,10 +42,20 @@ class _Route:
     path: Path
     location: str
 
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.site.site, self.location
+
+
+@dataclass
+class _Batch:
+    route: _Route
+    requests: list[SuppliedStartRequest] = field(default_factory=list)
+
 
 @dataclass(frozen=True)
 class _Unroutable:
-    outcome: str  # a Collector API outcome
+    outcome: Literal["no_site", "no_home_store", "unknown_location"]
     site: str | None
 
 
@@ -68,18 +77,13 @@ class Dispatcher:
         if not dry_run:
             self.collector.refresh_watch_list()
             self.collector.publish_site_catalogue(self.sites)
-        for route, requests in self._due(now, dry_run=dry_run):
-            for start in range(0, len(requests), JOB_REFS):
-                chunk = requests[start : start + JOB_REFS]
+        for batch in self._due(now, dry_run=dry_run):
+            for start in range(0, len(batch.requests), MAX_REFS_PER_JOB):
+                chunk = batch.requests[start : start + MAX_REFS_PER_JOB]
                 if dry_run:
-                    logger.info(
-                        "Would dispatch %d refs to %s at %s",
-                        len(chunk),
-                        route.site.site,
-                        route.location,
-                    )
+                    logger.info("Would dispatch %d refs to %s at %s", len(chunk), *batch.route.key)
                 else:
-                    self._create_job(route, chunk, now)
+                    self._create_job(batch.route, chunk, now)
 
     def _settle(self, now: datetime) -> None:
         for dispatched in self.store.in_flight():
@@ -90,21 +94,22 @@ class Dispatcher:
                     continue
             except ValueError as exc:
                 logger.error("Run %s cannot be ingested: %s", dispatched.run_id, exc)
-                self.store.abandon(dispatched.site, dispatched.run_id, str(exc), now)
+                self.store.abandon(dispatched, str(exc), now)
                 continue
-            if status != "running":
+            if status == "missing":
+                # Never created (a tick stopped in between) or deleted: no check ran.
+                logger.warning("Job %s is gone without a Run to ingest", dispatched.job_name)
+                self.store.cancel_dispatch(dispatched.site, dispatched.run_id)
+            elif status == "finished":
                 logger.warning("Job %s ended without a Run to ingest", dispatched.job_name)
-                error = f"Job {status} without an exported Run"
-                self.store.abandon(dispatched.site, dispatched.run_id, error, now)
+                self.store.abandon(dispatched, "Job ended without an exported Run", now)
 
-    def _due(self, now: datetime, *, dry_run: bool) -> list[tuple[_Route, list[dict[str, str]]]]:
+    def _due(self, now: datetime, *, dry_run: bool) -> list["_Batch"]:
         sites = self._load_sites()
         min_every = load_min_every(self.defaults)
         states = self.store.ref_states()
         in_flight = {ref for dispatched in self.store.in_flight() for ref in dispatched.refs}
-        batches: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
-        routes: dict[tuple[str, str], _Route] = {}
-        urls: dict[tuple[str, str], set[str]] = defaultdict(set)
+        batches: dict[tuple[str, str], _Batch] = {}
         _, entries = self.store.watch_list()
         for entry in entries:
             ref, url = entry["ref"], entry["url"]
@@ -120,14 +125,11 @@ class Dispatcher:
             state = states.get(ref)
             if not _is_due(state, route.site.schedule.every, min_every, entry["check_soon"], now):
                 continue
-            key = (route.site.site, route.location)
+            batch = batches.setdefault(route.key, _Batch(route))
             # One fetch per URL per Run; a repeated URL waits for the next tick.
-            if url in urls[key]:
-                continue
-            urls[key].add(url)
-            routes[key] = route
-            batches[key].append({"ref": ref, "url": url})
-        return [(routes[key], batches[key]) for key in sorted(batches)]
+            if all(request.url != url for request in batch.requests):
+                batch.requests.append(SuppliedStartRequest(ref, url))
+        return [batches[key] for key in sorted(batches)]
 
     def _load_sites(self) -> list[tuple[Site, Path]]:
         """Sites with Accepts Rules, in name order; an invalid Site fails the tick."""
@@ -136,67 +138,47 @@ class Dispatcher:
         accepting = [(site, path) for site, path in loaded if site.accepts and site.schedule]
         return sorted(accepting, key=lambda pair: pair[0].site)
 
-    def _create_job(self, route: _Route, requests: list[dict[str, str]], now: datetime) -> None:
+    def _create_job(
+        self, route: _Route, requests: list[SuppliedStartRequest], now: datetime
+    ) -> None:
+        site, location = route.key
         run_id = new_run_id(now)
         # Named here, not by Kubernetes, so the dispatch is recorded before the Job exists.
         suffix = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(5))
-        name = job_prefix(route.site.site, route.location) + suffix
+        name = job_prefix(site, location) + suffix
         job = yaml.safe_load(
             render_job(
                 self.job_template,
                 route.site,
                 route.path,
-                route.location,
+                location,
                 [self.sink_url],
-                None,
+                archive_url=None,
                 supply_config_map=name,
                 record="errors",
                 run_id=run_id,
+                name=name,
             )
         )
-        metadata = job["metadata"]
-        del metadata["generateName"]
-        metadata["name"] = name
-        refs = [request["ref"] for request in requests]
+        refs = [request.ref for request in requests]
         self.store.record_dispatch(
-            site=route.site.site,
-            location=route.location,
-            run_id=run_id,
-            job_name=name,
-            refs=refs,
-            created_at=now,
+            site=site, location=location, run_id=run_id, job_name=name, refs=refs, created_at=now
         )
         try:
             uid = self.cluster.create_job(job)
         except Exception:
-            self.store.cancel_dispatch(route.site.site, run_id)
+            # A timeout can follow a successful create; that Job's Run must still be ingested.
+            if self.cluster.job_status(name) == "missing":
+                self.store.cancel_dispatch(site, run_id)
             raise
-        supply = "".join(json.dumps(request, ensure_ascii=False) + "\n" for request in requests)
-        config_map_metadata = {
-            "name": name,
-            "labels": metadata.get("labels", {}),
-            "ownerReferences": [
-                {"apiVersion": "batch/v1", "kind": "Job", "name": name, "uid": uid}
-            ],
-        }
-        if "namespace" in metadata:
-            config_map_metadata["namespace"] = metadata["namespace"]
-        # Created after the Job, for its uid; the pod waits for the volume until then.
-        self.cluster.create_config_map(
-            {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": config_map_metadata,
-                "data": {SUPPLY_KEY: supply},
-            }
-        )
-        logger.info(
-            "Dispatched %d refs to %s at %s as Job %s",
-            len(refs),
-            route.site.site,
-            route.location,
-            name,
-        )
+        try:
+            # After the Job, for its uid; the pod waits for the volume until then.
+            self.cluster.create_config_map(supply_config_map(job, uid, Supply(tuple(requests))))
+        except Exception:
+            # Without permission to delete the Job, it fails at its deadline and is abandoned.
+            logger.exception("Job %s has no supply ConfigMap", name)
+            return
+        logger.info("Dispatched %d refs to %s at %s as Job %s", len(refs), site, location, name)
 
 
 def _route(sites: list[tuple[Site, Path]], url: str, location: str | None) -> _Route | _Unroutable:

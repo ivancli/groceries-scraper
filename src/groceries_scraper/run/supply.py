@@ -76,7 +76,10 @@ class Supply:
             raise SupplyError("\n".join([heading, *lines]))
 
     def write(self, path: Path) -> None:
-        write_jsonl(path, ({"ref": r.ref, "url": r.url} for r in self))
+        path.write_text(self.jsonl(), encoding="utf-8")
+
+    def jsonl(self) -> str:
+        return _jsonl({"ref": r.ref, "url": r.url} for r in self)
 
 
 def _parse(line: str, where: str) -> SuppliedStartRequest:
@@ -96,8 +99,11 @@ def _parse(line: str, where: str) -> SuppliedStartRequest:
 
 
 def write_jsonl(path: Path, lines: Iterable[dict[str, Any]]) -> None:
-    text = "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(_jsonl(lines), encoding="utf-8")
+
+
+def _jsonl(lines: Iterable[dict[str, Any]]) -> str:
+    return "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines)
 
 
 class SupplyOutcomes:

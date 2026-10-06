@@ -180,24 +180,24 @@ class DispatchStore:
         with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
             _report_outcome(connection, site, location, ref, outcome, at)
 
-    def abandon(self, site: str, run_id: str, error: str, at: datetime) -> bool:
+    def abandon(self, dispatched: Dispatched, error: str, at: datetime) -> None:
         """A Job that ended without an ingestable Run fails each of its refs at `at`."""
         with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
-            dispatched = connection.execute(
-                "SELECT * FROM dispatch.dispatches WHERE site = %s AND run_id = %s FOR UPDATE",
-                (site, run_id),
+            row = connection.execute(
+                "SELECT * FROM dispatch.dispatches"
+                " WHERE site = %s AND run_id = %s AND ingested_at IS NULL FOR UPDATE",
+                (dispatched.site, dispatched.run_id),
             ).fetchone()
-            if dispatched is None or dispatched["ingested_at"] is not None:
-                return False
-            for ref in dispatched["refs"]:
+            if row is None:
+                return
+            for ref in row["refs"]:
                 outcome = {"ref": ref, "outcome": "failed", "error": error, "at": at}
-                self._check(connection, dispatched, outcome, None)
+                self._check(connection, row, outcome, None)
             connection.execute(
                 "UPDATE dispatch.dispatches SET finished_at = %s, ingested_at = now()"
                 " WHERE site = %s AND run_id = %s",
-                (at, site, run_id),
+                (at, dispatched.site, dispatched.run_id),
             )
-            return True
 
     def ingest(self, site: str, run_id: str) -> bool:
         """Returns false until exported, or for an unregistered/already ingested Run."""

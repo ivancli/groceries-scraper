@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlsplit
 import yaml
 
 from groceries_scraper.config import Site
+from groceries_scraper.config.models import RecordLevel
+from groceries_scraper.run.supply import Supply
 
 SITE_LABEL = "groceries-scraper/site"
 LOCATION_LABEL = "groceries-scraper/location"
@@ -28,6 +30,23 @@ class JobTemplateError(DeployError):
 
 def _dns_name(name: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
+
+
+def supply_config_map(job: dict[str, Any], uid: str, supply: Supply) -> dict[str, Any]:
+    """The rendered Job's supply, deleted with the Job."""
+    metadata = job["metadata"]
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": metadata["name"],
+            "labels": metadata.get("labels", {}),
+            "ownerReferences": [
+                {"apiVersion": "batch/v1", "kind": "Job", "name": metadata["name"], "uid": uid}
+            ],
+        },
+        "data": {SUPPLY_KEY: supply.jsonl()},
+    }
 
 
 def job_prefix(site: str, location: str) -> str:
@@ -125,17 +144,21 @@ def render_job(
     archive_url: str | None,
     *,
     supply_config_map: str | None = None,
-    record: str | None = None,
+    record: RecordLevel | None = None,
     run_id: str | None = None,
+    name: str | None = None,
 ) -> str:
-    """`supply_config_map` names the ConfigMap holding the Run's `supply.jsonl`."""
+    """`name` replaces Kubernetes' generated name, for a Dispatcher that records it first."""
     if run_id is not None and supply_config_map is None:
         raise DeployError("--run-id needs --supply: only the Dispatcher assigns Run ids")
     job = _read_job(template)
     _refuse_unlabelled_names(site, location)
     metadata = _mapping(job, "metadata")
     metadata.pop("name", None)
-    metadata["generateName"] = job_prefix(site.site, location)
+    if name is None:
+        metadata["generateName"] = job_prefix(site.site, location)
+    else:
+        metadata["name"] = name
     labels = {SITE_LABEL: site.site, LOCATION_LABEL: location}
     _mapping(metadata, "labels").update(labels)
     pod = job["spec"]["template"]
@@ -162,8 +185,6 @@ def render_job(
             "mountPath",
             {"name": SUPPLY_VOLUME, "mountPath": SUPPLY_DIR, "readOnly": True},
         )
-        # The Dispatcher retries with backoff; a second pod would reuse the Run id.
-        job["spec"]["backoffLimit"] = 0
     if record is not None:
         args.extend(["--record", record])
     if run_id is not None:
