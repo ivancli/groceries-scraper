@@ -26,6 +26,8 @@ def scrapy_settings(
         "ROBOTSTXT_OBEY": site.settings.obey_robots,
         "ITEM_PIPELINES": {"groceries_scraper.adapter.pipelines.RecordPipeline": 300},
         "DOWNLOADER_MIDDLEWARES": {
+            "scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware": None,
+            "groceries_scraper.adapter.middlewares.SharedRobotsTxtMiddleware": 100,
             "groceries_scraper.adapter.middlewares.RefreshStatusMiddleware": 560,
             "groceries_scraper.adapter.middlewares.CaptureMiddleware": 800,
         },

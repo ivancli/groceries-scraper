@@ -17,13 +17,24 @@ from scrapy.http.headers import Headers
 from scrapy.responsetypes import responsetypes
 
 from groceries_scraper.adapter.fingerprint import request_fingerprint
-from groceries_scraper.adapter.middlewares import PAGE_TYPE, SESSION_NO, request_metadata
+from groceries_scraper.adapter.middlewares import (
+    PAGE_TYPE,
+    SESSION_NO,
+    SOURCE_FETCHED_AT,
+    request_metadata,
+)
 from groceries_scraper.adapter.settings import RECORDER, REPLAY
 from groceries_scraper.config.models import DEFAULT_LOCATION
 from groceries_scraper.run import Run
 from groceries_scraper.run.directory import read_manifest
 from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.redaction import REDACTED
+from groceries_scraper.run.supply import (
+    SUPPLY_FILE,
+    SuppliedStartRequest,
+    SupplyError,
+    read_supply,
+)
 
 _REDACTED_MARKERS = (REDACTED, quote(REDACTED))
 
@@ -75,6 +86,7 @@ class ReplayIndex:
         if not queue:
             return None
         meta, source = queue.popleft() if len(queue) > 1 else queue[0]
+        request.meta[SOURCE_FETCHED_AT] = meta["response"].get("timing", {}).get("finished_at")
         body = source.read_bytes() if isinstance(source, Path) else source
         # Sensitive headers are stored as a bare REDACTED string rather than a list.
         headers = Headers(
@@ -101,6 +113,7 @@ class SourceRun:
     run: Run
     config: dict[str, Any]
     index: ReplayIndex
+    supply: list[SuppliedStartRequest] | None = None  # a supplied Run's Start Requests
 
     @classmethod
     def load(cls, path: Path) -> Self:
@@ -108,6 +121,8 @@ class SourceRun:
             raise ReplayError(f"{path} is not a Run directory: no run.json")
         try:
             return cls._load(path)
+        except SupplyError as exc:
+            raise ReplayError(f"Run {path} is unreadable: {exc}") from None
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise ReplayError(f"Run {path} is unreadable: {type(exc).__name__}: {exc}") from None
 
@@ -129,7 +144,8 @@ class SourceRun:
         captures.sort(key=lambda capture: int(capture[0]["capture_no"]))
         location = manifest.get("location", DEFAULT_LOCATION)
         run = Run(manifest["site"], manifest["run_id"], path, location)
-        return cls(run, config, ReplayIndex(captures, ignore))
+        supply = read_supply(path / SUPPLY_FILE) if manifest.get("supplied") else None
+        return cls(run, config, ReplayIndex(captures, ignore), supply)
 
 
 class ReplayMiddleware:

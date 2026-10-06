@@ -15,6 +15,7 @@ class FollowRequest:
     page_type: str
     variables: dict[str, Any]
     parent_ref: int | None  # the Capture this request was discovered in
+    supplied_ref: str | None = None  # the Supplied Start Request's ref, when it is one
     # None when there's nothing to re-render (Start Requests).
     source: RequestSource | None = field(default=None, compare=False, repr=False)
 

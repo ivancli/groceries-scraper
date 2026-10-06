@@ -41,6 +41,7 @@ def check_site(site: Site) -> Findings:
         why = _why_unpassed(name, incoming[name]) if name in reachable else None
         _Checker(findings, f"page_types.{name}", why, session, site.locations).check(page_type)
     _check_records(site, findings, reachable)
+    _check_accepts(site, findings)
     if site.session and site.session.pool > len(site.start):
         # Follow-on requests keep their Start Request's Session.
         starts = f"{len(site.start)} Start Request{'s' if len(site.start) > 1 else ''}"
@@ -63,11 +64,38 @@ def _check_refs(site: Site, findings: Findings) -> None:
         for name, page_type in site.page_types.items()
         for j, rule in enumerate(page_type.follow)
     ]
+    if site.accepts is not None:
+        refs.append(("accepts.page_type", site.accepts.page_type))
     findings.errors += [
         f"{path}: unknown Page Type `{target}`"
         for path, target in refs
         if target not in site.page_types
     ]
+
+
+def _check_accepts(site: Site, findings: Findings) -> None:
+    accepts = site.accepts
+    if accepts is None:
+        return
+    findings.errors += [
+        f"accepts.examples[{i}]: `{url}` does not match `accepts.url`"
+        for i, url in enumerate(accepts.examples)
+        if not accepts.matches(url)
+    ]
+    page_type = site.page_types.get(accepts.page_type)
+    if page_type is not None and page_type.follow:
+        findings.errors.append(
+            f"accepts.page_type: Page Type `{accepts.page_type}` has Follow Rules; "
+            "a Supplied Start Request must not start a crawl"
+        )
+
+
+def _start_page_types(site: Site) -> list[tuple[str, str]]:
+    """(yaml path, Page Type) of everything a Run can start at."""
+    starts = [(f"start[{i}]", start.page_type) for i, start in enumerate(site.start)]
+    if site.accepts is not None:
+        starts.append(("accepts", site.accepts.page_type))
+    return starts
 
 
 def _check_session_setup(site: Site, findings: Findings) -> frozenset[str]:
@@ -184,7 +212,7 @@ def _not_emitted(record_type: str) -> str:
 
 def _reachable(site: Site) -> set[str]:
     seen: set[str] = set()
-    pending = [start.page_type for start in site.start]
+    pending = [page_type for _, page_type in _start_page_types(site)]
     while pending:
         name = pending.pop()
         if name in seen or name not in site.page_types:
@@ -206,8 +234,8 @@ def _incoming_variables(site: Site, reachable: set[str]) -> dict[str, list[Edge]
     available: dict[str, frozenset[str] | None] = dict.fromkeys(reachable)  # None: no path yet
     while True:
         incoming: dict[str, list[Edge]] = defaultdict(list)
-        for i, start in enumerate(site.start):
-            incoming[start.page_type].append((f"start[{i}]", frozenset()))
+        for path, start in _start_page_types(site):
+            incoming[start].append((path, frozenset()))
         for name, page_type in site.page_types.items():
             if (carried := available.get(name)) is None:
                 continue

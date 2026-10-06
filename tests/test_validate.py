@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
-from groceries_scraper.config import Findings, check_site, parse_site
+from groceries_scraper.config import ConfigError, Findings, check_site, parse_site
 
 DEFAULTS = yaml.safe_load((Path(__file__).parents[1] / "defaults.yaml").read_text())
 
@@ -604,4 +605,75 @@ def test_a_session_pool_larger_than_the_start_requests_is_a_warning() -> None:
     assert findings.errors == []
     assert findings.warnings == [
         "session.pool: 2 Sessions but 1 Start Request; Sessions without a Start Request stay idle"
+    ]
+
+
+# --- Accepts Rule -------------------------------------------------------------
+
+PRODUCT_URL = "https://x.example/p/1"
+
+
+def _accepting(url: str = "^https://x\\.example/p/", **page: Any) -> list[str]:
+    page_types = {"listing": {}, "product": {"record": "product", **page}}
+    accepts = {"page_type": "product", "url": url, "examples": [PRODUCT_URL]}
+    try:
+        return _errors(page_types, accepts=accepts)
+    except ConfigError as exc:  # the pattern itself is checked by the schema
+        return exc.errors
+
+
+def test_an_accepts_rule_on_a_page_type_without_follow_rules_is_valid() -> None:
+    assert _accepting() == []
+
+
+def test_the_accepted_page_type_must_not_follow_links() -> None:
+    follow = [{"select": {"css": "a::attr(href)"}, "page_type": "listing"}]
+
+    assert _accepting(follow=follow) == [
+        "accepts.page_type: Page Type `product` has Follow Rules; "
+        "a Supplied Start Request must not start a crawl"
+    ]
+
+
+def test_the_accepts_pattern_must_be_anchored() -> None:
+    assert _accepting("https://x\\.example/p/") == ["accepts.url: the pattern must start with `^`"]
+
+
+@pytest.mark.parametrize(
+    "construct",
+    ["(?<=x)", "(?<!x)", "(?P<id>\\d+)", "(?<id>\\d+)", "(?i)", "(?P=id)", "\\A", "\\Z"],
+)
+def test_the_accepts_pattern_stays_within_the_python_javascript_subset(construct: str) -> None:
+    [error] = _accepting(f"^https://x\\.example/p/{construct}")
+
+    assert error.startswith("accepts.url: ")
+    assert "Python/JavaScript" in error
+
+
+@pytest.mark.parametrize("escaped", ["\\(?<=", "[(?<=]", "\\\\d", "(?:a|b)?", "(?=1)", "(?!2)"])
+def test_escapes_classes_and_plain_groups_are_within_the_subset(escaped: str) -> None:
+    errors = _accepting(f"^https://x\\.example/p/{escaped}")
+
+    assert not any("Python/JavaScript" in error for error in errors)
+
+
+def test_the_accepts_pattern_must_compile() -> None:
+    [error] = _accepting("^https://x\\.example/p/(")
+
+    assert error.startswith("accepts.url: invalid pattern: ")
+
+
+def test_every_accepts_example_must_match_the_pattern() -> None:
+    errors = _errors(
+        {"product": {"record": "product"}},
+        start=[{"url": PRODUCT_URL, "page_type": "product"}],
+        accepts={
+            "page_type": "product",
+            "url": "^https://x\\.example/p/",
+            "examples": [PRODUCT_URL, "https://x.example/c/dairy"],
+        },
+    )
+
+    assert errors == [
+        "accepts.examples[1]: `https://x.example/c/dairy` does not match `accepts.url`"
     ]

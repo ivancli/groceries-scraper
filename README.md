@@ -121,6 +121,19 @@ See the [full configuration example and semantics](docs/design.md#site-config--f
 for nested Fields, Pipes, JSON APIs, sessions, and health thresholds. That example
 uses placeholder URLs and an illustrative `SHOP_KEY` environment variable.
 
+## Check supplied product URLs
+
+A Site with an Accepts Rule (`accepts:`) can check a list of product URLs instead of its
+`start:` list. Each line of the supply file is `{"ref": "…", "url": "…"}`:
+
+```bash
+uv run scrape run sites/<site>.yaml --supply supply.jsonl
+```
+
+Records carry `_meta.ref`, and `outcomes.jsonl` in the Run directory reports one of `ok`,
+`not_found`, `blocked`, `skipped` or `failed` per ref. A URL the Site doesn't accept is
+refused before anything is fetched. See [Supplied Start Requests](docs/design.md#supplied-start-requests).
+
 ## Inspect and iterate offline
 
 Replace `<run_id>` with the Run directory printed by the CLI and use a Capture

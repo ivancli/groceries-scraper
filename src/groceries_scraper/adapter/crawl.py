@@ -11,10 +11,15 @@ from groceries_scraper.run import Run
 from groceries_scraper.run.health import assess_health
 from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.summary import RunOutcome
+from groceries_scraper.run.supply import SuppliedStartRequest
 
 
 def crawl(
-    site: Site, run: Run, limit: int | None = None, replay_of: SourceRun | None = None
+    site: Site,
+    run: Run,
+    limit: int | None = None,
+    replay_of: SourceRun | None = None,
+    supply: list[SuppliedStartRequest] | None = None,
 ) -> RunOutcome:
     """Blocks until the crawl ends; Twisted allows one per process."""
     index = replay_of.index if replay_of is not None else None
@@ -22,10 +27,11 @@ def crawl(
     source = replay_of.run if replay_of is not None else None
     # Set by a Kubernetes Job through the Downward API, to trace the Run back to it.
     job = os.environ.get("SCRAPE_JOB_NAME")
-    settings[RECORDER] = RunRecorder(run, site, source, job)
+    settings[RECORDER] = RunRecorder(run, site, source, job, supply)
     process = CrawlerProcess(settings)
     crawler = process.create_crawler(SiteSpider)
-    process.crawl(crawler, site=site, location=site.locations.get(run.location, {}))
+    location = site.locations.get(run.location, {})
+    process.crawl(crawler, site=site, location=location, supply=supply)
     started = time.monotonic()
     try:
         process.start()

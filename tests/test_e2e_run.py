@@ -98,6 +98,12 @@ class _Shop(BaseHTTPRequestHandler):
             category = url.path.removeprefix("/c/") if url.path.startswith("/c/") else "dairy"
             listing = _listing(page, self.server.wrap_pagination, category)
             self._send("text/html; charset=utf-8", listing)
+        elif url.path.startswith("/p/"):
+            sku = url.path.removeprefix("/p/")
+            status, body = self.server.product_responses.get(
+                sku, (200, f'<h1 data-sku="{sku}">Product {sku}</h1>')
+            )
+            self._send("text/html; charset=utf-8", body, status=status)
         else:
             self.send_error(404)
 
@@ -1546,3 +1552,232 @@ def test_replay_of_a_session_pool_reproduces_its_records(tmp_path: Path, shop: _
     assert replay is not None and network == ""
     assert _record_data(replay) == _record_data(source)
     assert _manifest(replay)["stats"]["requests"]["missing"] == 0
+
+
+# --- Supplied Start Requests ----------------------------------------------------
+
+SUPPLIED_SITE = Template("""
+site: e2e
+settings: {download_delay: 0, concurrent_requests_per_domain: 1}
+$session
+records: {product: {key: [sku]}}
+accepts:
+  page_type: product
+  url: '^$pattern/p/'
+  examples: ["$base/p/example"]
+start: [{url: "$base/c/dairy", page_type: listing}]
+page_types:
+  listing:
+    follow: [{select: {css: "a::attr(href)"}, page_type: product}]
+  product:
+    record: product
+    fields:
+      sku: {css: "h1::attr(data-sku)", type: string, required: true}
+      name: {css: "h1::text", type: string}
+""")
+
+
+def _base(shop: _ShopServer) -> str:
+    return f"http://127.0.0.1:{shop.server_address[1]}"
+
+
+def _supplied(
+    tmp_path: Path,
+    shop: _ShopServer,
+    supply: list[dict[str, str]] | str,
+    *args: str,
+    session: str = "",
+    exit_code: int = 0,
+) -> tuple[Path, str]:
+    _write_supplied(tmp_path, shop, supply, session)
+    return _crawl_config(tmp_path, "--supply", "supply.jsonl", *args, exit_code=exit_code)
+
+
+def _write_supplied(
+    tmp_path: Path, shop: _ShopServer, supply: list[dict[str, str]] | str, session: str = ""
+) -> None:
+    """A string is the supply file itself."""
+    base = _base(shop)
+    config = SUPPLIED_SITE.substitute(base=base, pattern=re.escape(base), session=session)
+    (tmp_path / "e2e.yaml").write_text(config)
+    if not isinstance(supply, str):
+        supply = "".join(json.dumps(line) + "\n" for line in supply)
+    (tmp_path / "supply.jsonl").write_text(supply)
+
+
+def _refs(shop: _ShopServer, *skus: str) -> list[dict[str, str]]:
+    return [{"ref": f"ref-{sku}", "url": f"{_base(shop)}/p/{sku}"} for sku in skus]
+
+
+def _outcomes(run_dir: Path) -> list[dict[str, Any]]:
+    lines = (run_dir / "outcomes.jsonl").read_text().splitlines()
+    return [json.loads(line) for line in lines]
+
+
+def test_a_supplied_run_reports_one_outcome_per_ref_instead_of_crawling_start(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {"p11": (404, "gone")}
+    # Queued behind the robots.txt download, as Scrapy used to send without checking.
+    shop.robots = "User-agent: *\nDisallow: /p/p12\n"
+    supply = _refs(shop, "p10", "p11", "p12")
+
+    run_dir, _ = _supplied(tmp_path, shop, supply)
+
+    assert [(o["ref"], o["outcome"]) for o in _outcomes(run_dir)] == [
+        ("ref-p10", "ok"),
+        ("ref-p11", "not_found"),
+        ("ref-p12", "skipped"),
+    ]
+    [record] = _records(run_dir)
+    assert record["sku"] == "p10"
+    assert record["_meta"]["ref"] == "ref-p10"
+    assert not any(path.startswith("/c/") for path in shop.paths)
+    manifest = _manifest(run_dir)
+    assert manifest["supplied"] is True
+    assert manifest["supplied_refs"] == 3
+
+
+def test_refused_and_broken_product_pages_are_blocked_or_failed(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {
+        "p10": (403, "denied"),
+        "p11": (429, "slow down"),
+        "p12": (200, "<h1>no sku</h1>"),
+        "p20": (500, "oops"),
+    }
+
+    run_dir, _ = _supplied(tmp_path, shop, _refs(shop, "p10", "p11", "p12", "p20"), exit_code=2)
+
+    assert _outcomes(run_dir) == [
+        {"ref": "ref-p10", "url": f"{_base(shop)}/p/p10", "outcome": "blocked"},
+        {"ref": "ref-p11", "url": f"{_base(shop)}/p/p11", "outcome": "blocked"},
+        {
+            "ref": "ref-p12",
+            "url": f"{_base(shop)}/p/p12",
+            "outcome": "failed",
+            "error": "required Field `sku` is missing",
+        },
+        {"ref": "ref-p20", "url": f"{_base(shop)}/p/p20", "outcome": "failed", "error": "HTTP 500"},
+    ]
+    assert _records(run_dir) == []
+
+
+def _refused(tmp_path: Path, shop: _ShopServer, supply: list[dict[str, str]] | str) -> str:
+    """Refused before the crawl: exit 1, no request and no Run directory."""
+    _write_supplied(tmp_path, shop, supply)
+    return _refused_supply(tmp_path, shop)
+
+
+def _refused_supply(tmp_path: Path, shop: _ShopServer) -> str:
+    result = subprocess.run(
+        [str(SCRAPE), "run", "e2e.yaml", "--supply", "supply.jsonl"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 1, result.stderr
+    assert shop.paths == []
+    assert not (tmp_path / "runs" / "e2e").exists()
+    return result.stderr
+
+
+def test_a_supplied_url_the_site_does_not_accept_is_refused_before_the_crawl(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    supply = [*_refs(shop, "p10"), {"ref": "listing", "url": f"{_base(shop)}/c/dairy"}]
+
+    error = _refused(tmp_path, shop, supply)
+
+    assert "Supplied URLs not matching `accepts.url`" in error
+    assert f"listing: {_base(shop)}/c/dairy" in error
+
+
+@pytest.mark.parametrize(
+    ("supply", "message"),
+    [
+        ('{"ref": "a"}\n', 'expected {"ref": …, "url": …}'),
+        ("not json\n", "not JSON"),
+        ("", "supplies no Start Requests"),
+    ],
+)
+def test_a_malformed_supply_file_is_refused(
+    tmp_path: Path, shop: _ShopServer, supply: str, message: str
+) -> None:
+    assert message in _refused(tmp_path, shop, supply)
+
+
+def test_repeated_refs_are_refused(tmp_path: Path, shop: _ShopServer) -> None:
+    supply = [*_refs(shop, "p10"), {"ref": "ref-p10", "url": f"{_base(shop)}/p/p11"}]
+
+    assert "repeated ref `ref-p10`" in _refused(tmp_path, shop, supply)
+
+
+def test_a_site_without_an_accepts_rule_takes_no_supply(tmp_path: Path, shop: _ShopServer) -> None:
+    (tmp_path / "e2e.yaml").write_text(
+        _site_config(base=_base(shop), settings="", session="", headers="")
+    )
+    (tmp_path / "supply.jsonl").write_text(json.dumps(_refs(shop, "p10")[0]) + "\n")
+
+    assert "has no Accepts Rule" in _refused_supply(tmp_path, shop)
+
+
+def test_replay_of_a_supplied_run_reproduces_its_outcomes_and_scraped_at_offline(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.product_responses = {"p11": (404, "gone"), "p20": (429, "slow down")}
+    shop.robots = "User-agent: *\nDisallow: /p/p12\n"
+    source, _ = _supplied(tmp_path, shop, _refs(shop, "p10", "p11", "p12", "p20", "p21"))
+
+    replay, network = _offline(tmp_path, "replay", str(source))
+
+    assert replay is not None and network == ""
+    assert _outcomes(replay) == _outcomes(source)
+    assert [o["outcome"] for o in _outcomes(replay)] == [
+        "ok",
+        "not_found",
+        "skipped",
+        "blocked",
+        "ok",
+    ]
+    meta = ("ref", "scraped_at", "source_url")
+    replayed = sorted(
+        ({**r, "_meta": {k: r["_meta"][k] for k in meta}} for r in _records(replay)),
+        key=lambda r: r["sku"],
+    )
+    assert replayed == sorted(
+        ({**r, "_meta": {k: r["_meta"][k] for k in meta}} for r in _records(source)),
+        key=lambda r: r["sku"],
+    )
+    manifest = _manifest(replay)
+    assert (manifest["supplied"], manifest["supplied_refs"]) == (True, 5)
+    # Only the robots-denied ref has no Capture; `start:` is ignored here too.
+    assert [m["request"]["url"] for m in manifest["missing"]] == [f"{_base(shop)}/p/p12"]
+
+
+def test_replay_with_a_config_that_no_longer_accepts_the_supply_is_refused(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    source, _ = _supplied(tmp_path, shop, _refs(shop, "p10"))
+    edited = tmp_path / "edited.yaml"
+    config = (tmp_path / "e2e.yaml").read_text()
+    edited.write_text(config.replace("/p/'", "/product/'").replace("/p/example", "/product/x"))
+
+    args = ("replay", str(source), "--config", str(edited))
+    replay, network = _offline(tmp_path, *args, exit_code=1)
+
+    assert replay is None and network == ""
+
+
+def test_refs_never_started_before_the_run_ends_are_skipped(
+    tmp_path: Path, shop: _ShopServer
+) -> None:
+    shop.home_status = 500  # Session Setup fails, so the Run ends before any product
+    session = SESSION.substitute(base=_base(shop), pool=1, refresh_on="419", max_refresh=1)
+
+    run_dir, _ = _supplied(tmp_path, shop, _refs(shop, "p10", "p11"), session=session, exit_code=2)
+
+    assert [o["outcome"] for o in _outcomes(run_dir)] == ["skipped", "skipped"]
+    assert not any(path.startswith("/p/") for path in shop.paths)

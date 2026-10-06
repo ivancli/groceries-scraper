@@ -351,6 +351,53 @@ class Health(_Model):
     max_http_error_ratio: Ratio | None = None
 
 
+def _shared_regex(pattern: str) -> str:
+    """The tracker matches the same pattern in JavaScript, so only the common subset is allowed."""
+    if not pattern.startswith("^"):
+        raise _config_error("the pattern must start with `^`")
+    if construct := _outside_shared_subset(pattern):
+        raise _config_error(
+            f"`{construct}` is outside the Python/JavaScript regex subset: use only "
+            "`(?:…)`, `(?=…)` and `(?!…)` groups, with no anchors besides `^` and `$`"
+        )
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise _config_error(f"invalid pattern: {exc}") from None
+    return pattern
+
+
+def _outside_shared_subset(pattern: str) -> str | None:
+    i, in_class = 0, False
+    while i < len(pattern):
+        char = pattern[i]
+        if char == "\\":
+            escaped = pattern[i : i + 2]
+            if not in_class and escaped in ("\\A", "\\Z", "\\z"):
+                return escaped
+            i += 2
+            continue
+        if in_class:
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+        elif pattern.startswith("(?", i) and pattern[i + 2 : i + 3] not in (":", "=", "!"):
+            return pattern[i : i + 4]
+        i += 1
+    return None
+
+
+class AcceptsRule(_Model):
+    """Which URLs the Site takes as Supplied Start Requests, and the Page Type they start at."""
+
+    page_type: str
+    url: Annotated[str, AfterValidator(_shared_regex)]
+    examples: Annotated[list[str], Field(min_length=1)]
+
+    def matches(self, url: str) -> bool:
+        return re.search(self.url, url) is not None
+
+
 class Site(_Model):
     site: str
     settings: Settings
@@ -362,6 +409,7 @@ class Site(_Model):
     replay: Replay = Field(default_factory=Replay)
     records: dict[str, RecordType] = Field(default_factory=dict)
     health: Health = Field(default_factory=Health)
+    accepts: AcceptsRule | None = None
     start: Annotated[list[StartRequest], Field(min_length=1)]
     page_types: Annotated[dict[str, PageType], Field(min_length=1)]
 
