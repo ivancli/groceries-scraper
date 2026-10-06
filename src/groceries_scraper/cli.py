@@ -31,13 +31,13 @@ RUNS_DIR = Path("runs")
 EXPORT_FAILED = 3  # beyond Run Health's 0 / 1 / 2
 ARCHIVE_FAILED = 4
 
-SinkOption = Annotated[
-    list[str] | None,
-    typer.Option(
-        "--sink",
-        envvar="SCRAPE_SINK",  # lets a cluster's Secret choose every Job's Sinks
-        help="Export the finished Run to postgres://… or s3://<bucket>[/<prefix>]; repeatable.",
-    ),
+SINK_HELP = "Export the finished Run to postgres://… or s3://<bucket>[/<prefix>]; repeatable."
+
+SinkOption = Annotated[list[str] | None, typer.Option("--sink", help=SINK_HELP)]
+
+# Lets a cluster's Secret choose every Job's Sinks; `deploy job` must not copy the shell's.
+RunSinkOption = Annotated[
+    list[str] | None, typer.Option("--sink", envvar="SCRAPE_SINK", help=SINK_HELP)
 ]
 
 LocationOption = Annotated[
@@ -246,7 +246,7 @@ def run(
             "writes outcomes.jsonl."
         ),
     ] = None,
-    sink: SinkOption = None,
+    sink: RunSinkOption = None,
     archive_url: ArchiveOption = None,
 ) -> None:
     """Run a Site; exits 0 / 1 / 2 for Run Health, 3 if export failed, 4 if archiving failed."""
@@ -278,7 +278,7 @@ def run(
 def replay(
     run_dir: Path,
     config: Annotated[Path | None, typer.Option(help="Edited Site config.")] = None,
-    sink: SinkOption = None,
+    sink: RunSinkOption = None,
     archive_url: ArchiveOption = None,
 ) -> None:
     """Replay a prior Run's Captures offline as a new Run; exits like `run`."""

@@ -103,6 +103,20 @@ def test_renders_one_run_and_preserves_the_overlays_cluster_settings(
     assert job["spec"]["activeDeadlineSeconds"] == 14400
 
 
+def test_scrape_sink_is_left_to_the_cluster(tmp_path: Path) -> None:
+    config = _site(tmp_path)
+    result = CliRunner().invoke(
+        app,
+        ["deploy", "job", str(config)],
+        input=TEMPLATE.read_text(),
+        env={"SCRAPE_SINK": "postgres://operator-shell/db"},
+    )
+
+    assert result.exit_code == 0, result.output
+    job = yaml.safe_load(result.stdout)
+    assert "--sink" not in job["spec"]["template"]["spec"]["containers"][0]["args"]
+
+
 @pytest.mark.parametrize(
     ("site", "location", "prefix"),
     [

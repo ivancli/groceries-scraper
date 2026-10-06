@@ -241,10 +241,11 @@ The Run directory appears as `runs/aldi/<run_id>/`, ready for `scrape inspect` a
 `replay`. Re-import the image after changing code; the mappings are fixed when the cluster
 is created, so another checkout needs its own cluster. The pod runs as UID/GID 1000 so
 the files are yours; if `id -u` or `id -g` differ, change `runAsUser`/`runAsGroup` in
-[`deploy/k8s/overlays/local/job.yaml`](deploy/k8s/overlays/local/job.yaml).
-Each Job exports to the cluster's Postgres: the `scrape-sinks` Secret sets `SCRAPE_SINK`,
-which `run` and `replay` read when no `--sink` is given, and `PGPASSWORD`.
-The local overlay makes no Archive.
+[`deploy/k8s/overlays/local/job.yaml`](deploy/k8s/overlays/local/job.yaml) and
+[`postgres/backup.yaml`](deploy/k8s/overlays/local/postgres/backup.yaml).
+Every Job exports to the cluster's Postgres through `SCRAPE_SINK` and `PGPASSWORD` from the
+`scrape-sinks` Secret; that Secret is optional, so skipping the Postgres step leaves Jobs
+without a Sink. The local overlay makes no Archive.
 
 The Job succeeds only for an `ok` Run. Exit codes 1–4 (degraded, failed, Sink or
 Archive failure, but also an uncaught error, which exits 1) fail it at once; other pod failures retry up to twice, and evicted
@@ -262,14 +263,14 @@ PC is next on) to `backups/scrape-<time>.dump`, keeping the newest 14. To back u
 kubectl create job --from=cronjob/postgres-backup postgres-backup-now
 ```
 
-To restore a dump, into a fresh cluster's empty `scrape` database or into a new database
-beside it to check it first:
+To restore a dump into a new database beside `scrape` and check it, then into a fresh
+cluster's empty `scrape` with `db=scrape` and no `createdb`:
 
 ```bash
-dump=backups/scrape-<time>.dump
-kubectl exec postgres-0 -- createdb -U scrape restored  # skip to restore into `scrape`
-kubectl exec -i postgres-0 -- pg_restore -U scrape -d restored --no-owner < "$dump"
-kubectl exec postgres-0 -- psql -U scrape -d restored -c \
+dump=backups/scrape-<time>.dump db=restored
+kubectl exec postgres-0 -- createdb -U scrape "$db"
+kubectl exec -i postgres-0 -- pg_restore -U scrape -d "$db" --no-owner < "$dump"
+kubectl exec postgres-0 -- psql -U scrape -d "$db" -c \
   'SELECT (SELECT count(*) FROM scrape_runs) runs, (SELECT count(*) FROM scrape_records) records'
 ```
 
