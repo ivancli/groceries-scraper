@@ -879,3 +879,32 @@ def test_sites_must_not_accept_one_anothers_examples() -> None:
         "b.yaml: accepts.examples[0]: `https://x.example/p/2` "
         "is also accepted by Site `a` (a.yaml)",
     ]
+
+
+def test_every_page_type_emitting_the_accepted_record_type_is_checked() -> None:
+    page_types = {
+        "listing": {"record": "product", "fields": {"name": {"css": "a::text", "type": "string"}}},
+        "product": {"record": "product", "fields": PRICE_FIELDS},
+    }
+    errors = _errors(page_types, accepts=ACCEPTS, schedule={"every": "30m"})
+
+    assert errors == [
+        "page_types.listing.fields.url: missing; the Price Record contract requires it",
+        "page_types.listing.fields.name: the Price Record contract requires `required: true`",
+        "page_types.listing.fields.price: missing; the Price Record contract requires it",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("schedule", "error"),
+    [
+        ("15m", "defaults schedule: expected a mapping with `min_every`"),
+        ({"min_every": "soon"}, "defaults schedule.min_every: `soon` is not a duration like "),
+    ],
+)
+def test_malformed_schedule_defaults_are_a_config_error(schedule: Any, error: str) -> None:
+    with pytest.raises(ConfigError) as exc:
+        parse_site({"site": "s"}, {**DEFAULTS, "schedule": schedule})
+
+    [message] = exc.value.errors
+    assert message.startswith(error)

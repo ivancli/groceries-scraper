@@ -56,10 +56,14 @@ jobs:
       - name: Validates every baked-in Site config
         run: >-
           docker run --rm --network none "$IMAGE" validate sites/
-      - name: Replays a Golden Fixture
+      - name: Replays the aldi Golden Fixture
         run: >-
           docker run --rm --network none -v "$PWD/tests/sites/aldi:/fixture:ro" "$IMAGE"
           replay /fixture --config sites/aldi.yaml
+      - name: Replays the aldi_picks Golden Fixture
+        run: >-
+          docker run --rm --network none -v "$PWD/tests/sites/aldi_picks:/fixture:ro" "$IMAGE"
+          replay /fixture --config sites/aldi_picks.yaml
       # Playwright only launches the Chromium build it pins, so a launch proves the match.
       - name: Launches the Chromium of the locked Playwright
         run: |

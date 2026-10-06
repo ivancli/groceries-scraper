@@ -97,36 +97,35 @@ def _check_accepts(site: Site, findings: Findings) -> None:
             "a Supplied Start Request must not start a crawl"
         )
     if page_type is not None:
-        _check_price_record(accepts.page_type, page_type, findings)
+        _check_price_record(site, accepts.page_type, page_type, findings)
 
 
-def _check_price_record(name: str, page_type: PageType, findings: Findings) -> None:
-    """The Dispatcher reads only these Fields, so others are allowed."""
+def _check_price_record(site: Site, name: str, page_type: PageType, findings: Findings) -> None:
     if page_type.record is None:
         findings.errors.append(
             f"accepts.page_type: Page Type `{name}` emits no Records; "
             "an accepting Site's Records must match the Price Record contract"
         )
         return
-    contract = _Contract(findings, "the Price Record contract")
-    for field_name, wanted in PRICE_RECORD.items():
-        path = f"page_types.{name}.fields.{field_name}"
-        if field_name in page_type.fields:
-            contract.field(path, wanted, page_type.fields[field_name])
-        elif wanted.required:
-            findings.errors.append(f"{path}: missing; the Price Record contract requires it")
+    # The Dispatcher reads only these Fields, so the contract is open to others.
+    contract = _Contract(findings, "the Price Record contract", open=True)
+    for emitter, spec in site.page_types.items():
+        if spec.record == page_type.record:
+            contract.check(f"page_types.{emitter}.fields", PRICE_RECORD, spec.fields)
 
 
 def check_sites(sites: Mapping[str, Site]) -> list[str]:
-    """Errors across Sites, keyed by source: regex overlap is undecidable, so examples stand in."""
-    accepting = {source: site for source, site in sites.items() if site.accepts is not None}
+    """Regex overlap is undecidable, so each Site's examples stand in for its pattern."""
+    accepting = [
+        (source, site.site, site.accepts) for source, site in sites.items() if site.accepts
+    ]
     return [
-        f"{source}: accepts.examples[{i}]: `{url}` is also accepted by Site `{other.site}` "
+        f"{source}: accepts.examples[{i}]: `{url}` is also accepted by Site `{other}` "
         f"({other_source})"
-        for source, site in accepting.items()
-        for i, url in enumerate(site.accepts.examples)  # type: ignore[union-attr]
-        for other_source, other in accepting.items()
-        if other_source != source and other.accepts.matches(url)  # type: ignore[union-attr]
+        for source, _, accepts in accepting
+        for i, url in enumerate(accepts.examples)
+        for other_source, other, other_accepts in accepting
+        if other_source != source and other_accepts.matches(url)
     ]
 
 
@@ -195,24 +194,28 @@ def _check_records(site: Site, findings: Findings, reachable: set[str]) -> None:
 
 @dataclass
 class _Contract:
-    """Checks a Page Type's Fields against its Record Type's Record Contract."""
+    """Checks a Page Type's Fields against a contract for its Records."""
 
     findings: Findings
     label: str  # names the contract in messages
+    open: bool = False  # allows other Fields, and omitting optional ones
 
     def check(
         self, prefix: str, contract: dict[str, ContractField], specs: dict[str, FieldSpec]
     ) -> None:
         for name, wanted in contract.items():
             if name in specs:
-                self.field(f"{prefix}.{name}", wanted, specs[name])
-            else:
+                self._field(f"{prefix}.{name}", wanted, specs[name])
+            elif not self.open:
                 self._error(f"{prefix}.{name}", f"missing; {self.label} declares it")
-        for name in specs:
-            if name not in contract:
-                self._error(f"{prefix}.{name}", f"not in {self.label}")
+            elif wanted.required:
+                self._error(f"{prefix}.{name}", f"missing; {self.label} requires it")
+        if not self.open:
+            for name in specs:
+                if name not in contract:
+                    self._error(f"{prefix}.{name}", f"not in {self.label}")
 
-    def field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
+    def _field(self, path: str, wanted: ContractField, spec: FieldSpec) -> None:
         if spec.type is None:
             # Untyped Fields skip Coercion, so nothing would enforce the contract's type.
             fix = f"add `type: {wanted.type}` to match {self.label}"
@@ -228,7 +231,7 @@ class _Contract:
             got, says = _array_shape(spec.items), _array_shape(wanted.items)
             self._error(path, f"{got}, but {self.label} says {says}")
         elif wanted.items is not None and spec.items is not None:
-            self.field(f"{path}.items", wanted.items, spec.items)
+            self._field(f"{path}.items", wanted.items, spec.items)
         else:
             self.check(f"{path}.fields", wanted.fields, spec.fields)
 

@@ -49,7 +49,11 @@ def parse_site(data: Any, defaults: Any, source: str = "<site>") -> Site:
     context = {}
     if isinstance(defaults, Mapping):
         defaults = dict(defaults)
-        if (min_every := (defaults.pop("schedule", None) or {}).get(MIN_EVERY)) is not None:
+        schedule = defaults.pop("schedule", None) or {}
+        if not isinstance(schedule, Mapping):
+            message = f"defaults schedule: expected a mapping with `{MIN_EVERY}`"
+            raise ConfigError(source, Findings([message]))
+        if (min_every := schedule.get(MIN_EVERY)) is not None:
             try:
                 context[MIN_EVERY] = parse_duration(min_every)
             except PydanticCustomError as exc:
