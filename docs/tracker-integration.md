@@ -86,6 +86,35 @@ The Dispatcher converts dollars to cents with decimal arithmetic and rejects non
 
 Item ids are deterministic: `sha256(kind, site, location, ref, observed_at)`.
 
+The store is implemented in `groceries_scraper.dispatch.store.DispatchStore` (#59).
+`prepare()` creates the six tables above without changing the generic Sink tables.
+`record_dispatch(site=…, location=…, run_id=…, job_name=…, refs=…, created_at=…)`
+registers a Run before ingestion. `ingest(site, run_id)` reads its completed Postgres
+Sink export in one transaction and returns `true` once; an unregistered Run,
+Replay, unfinished Run or already ingested Run returns `false`. A Location or ref
+mismatch raises an error and commits nothing. Successful checks use the Record's
+`_meta.scraped_at`; unsuccessful checks use the Sink outcome's `at` timestamp.
+Missing currency is treated as AUD; an explicit non-AUD currency is a failed check.
+Dollar amounts use `Decimal` and round half up to integer cents.
+
+The hash input is the UTF-8 encoding of the compact JSON array
+`[kind, site, location, ref, observed_at]`, with the time normalised to UTC (`Z`).
+Outbox payloads carry the full Collector API item, including `id`, `kind` and `ref`.
+The first success establishes a Product State (`change`) without a health transition.
+The first failure establishes failing Check Health. Only the five Collector API
+outcome values listed above enter the outbox, once per distinct value per ref;
+`failed` and `skipped` attempts are reported through Check Health. Repeated errors
+still add checks and increment the failure streak; success resets that streak.
+`check_soon` stays set until the Watch List is refreshed from the tracker.
+Delayed Runs still add checks and Price Observations, but older successful states
+cannot replace newer ones and older attempts cannot replace current Check Health.
+Daily heartbeats are de-duplicated against the outbox, including already sent items.
+
+`tests/test_dispatch_store.py` exercises the store against disposable Postgres.
+Its walnut week has three checks per day, prices $5.49 → $4.49 → $4.99 → $5.49,
+and one failed check followed by recovery: 21 checks, 20 Price Observations,
+four changes, two health transitions and seven heartbeats.
+
 **Due rule.** An entry is due when nothing is in flight for its ref and either:
 - `check_soon` is set and at least `min_every` has passed since its last attempt, or
 - `every` has passed since its last success.
