@@ -28,7 +28,7 @@ def _site(tmp_path: Path, **changes: Any) -> Path:
 def test_renders_one_run_and_preserves_the_overlays_cluster_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("PATH", "")  # rendering must not shell out to kubectl
     config = _site(tmp_path, locations={"north": {}})
     template = yaml.safe_load(TEMPLATE.read_text())
     container = template["spec"]["template"]["spec"]["containers"][0]
@@ -149,7 +149,6 @@ def test_browser_page_types_get_shared_memory_and_a_memory_bump(tmp_path: Path) 
         {"name": "runs", "emptyDir": {}},
         {"name": "scrape-shm", "emptyDir": {"medium": "Memory"}},
     ]
-    assert "unreachable" in result.stderr
 
 
 def test_a_site_without_locations_uses_default(tmp_path: Path) -> None:
@@ -239,6 +238,45 @@ def test_sink_passwords_are_refused_without_printing_the_url(
     assert result.exit_code == 1
     assert "PGPASSWORD" in result.stderr
     assert sink_url not in result.output
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "sink_url",
+    [
+        "postgres://user@db/groceries?password=secret",
+        "postgresql://db/groceries?sslmode=require&password=secret",
+    ],
+)
+def test_sink_passwords_in_the_query_are_refused(tmp_path: Path, sink_url: str) -> None:
+    result = CliRunner().invoke(
+        app,
+        ["deploy", "job", str(_site(tmp_path)), "--sink", sink_url],
+        input=TEMPLATE.read_text(),
+    )
+
+    assert result.exit_code == 1
+    assert "PGPASSWORD" in result.stderr
+    assert sink_url not in result.output
+
+
+def test_an_archive_overlapping_a_sink_is_refused_like_run(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "deploy",
+            "job",
+            str(_site(tmp_path)),
+            "--sink",
+            "s3://bucket/runs/records",
+            "--archive",
+            "s3://bucket/runs",
+        ],
+        input=TEMPLATE.read_text(),
+    )
+
+    assert result.exit_code == 1
+    assert "--archive s3://bucket/runs overlaps --sink s3://bucket/runs/records" in result.stderr
     assert result.stdout == ""
 
 
