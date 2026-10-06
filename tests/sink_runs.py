@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from groceries_scraper.run.supply import OUTCOMES_FILE, write_jsonl
+
 KEYED = {"product": {"key": ["sku"]}, "promotion": {}}
 
 
@@ -14,6 +16,7 @@ def saved_run(
     health: str | None = "ok",
     run_id: str = "20260101T000000Z-abc123",
     location: str | None = None,  # None: a Run from before Locations
+    outcomes: list[dict[str, Any]] | None = None,
 ) -> Path:
     path = root / "shop" / run_id
     (path / "records").mkdir(parents=True)
@@ -26,6 +29,9 @@ def saved_run(
         manifest["location"] = location
     if health is not None:
         manifest["health"] = {"level": health, "breaches": []}
+    if outcomes is not None:
+        manifest.update(supplied=True, supplied_refs=len(outcomes))
+        write_jsonl(path / OUTCOMES_FILE, outcomes)
     (path / "run.json").write_text(json.dumps(manifest))
     for record_type, typed in records.items():
         lines = [json.dumps({**record, "_meta": {"run_id": run_id}}) for record in typed]

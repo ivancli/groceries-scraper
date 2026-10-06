@@ -11,6 +11,7 @@ from typing import Any
 from groceries_scraper.config.models import DEFAULT_LOCATION, RecordType
 from groceries_scraper.run.health import HealthLevel
 from groceries_scraper.run.keys import RecordKey
+from groceries_scraper.run.supply import OUTCOMES_FILE
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,15 @@ class SavedRun:
         if not path.is_file():
             return
         with path.open(encoding="utf-8") as file:
+            for line in file:
+                if line.strip():
+                    yield json.loads(line)
+
+    def outcomes(self) -> Iterator[dict[str, Any]]:
+        """As written; a supplied Run must have its completed outcomes file."""
+        if not self.manifest.get("supplied"):
+            return
+        with (self.path / OUTCOMES_FILE).open(encoding="utf-8") as file:
             for line in file:
                 if line.strip():
                     yield json.loads(line)

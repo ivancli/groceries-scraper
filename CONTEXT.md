@@ -203,7 +203,7 @@ _Avoid_: Status, Run Health
 - A **Record Type** has at most one **Record Key**; within a **Run** only the first **Record** per key is kept
 - Two **Runs** of a **Site** are compared by matching **Records** on their **Record Key**, only when both scrape the same **Location**
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
-- A **Run** is exported to zero or more **Sinks** after it finishes; a `failed` **Run** only when forced, and re-exporting replaces the **Sink**'s earlier copy
+- A **Run** is exported to zero or more **Sinks** after it finishes; a **Run** with **Supplied Start Requests** is exported whatever its **Run Health**, other `failed` **Runs** only when forced, and re-exporting replaces the **Sink**'s earlier copy
 - A **Run** has at most one **Archive**, made after it finishes whatever its **Run Health**
 - A **Site** has at most one **Accepts Rule**; a URL matching two **Sites**' rules is a configuration error
 - A **Run** given **Supplied Start Requests** ignores the **Site**'s `start:` list and reports exactly one **Start Request Outcome** per **Supplied Start Request**

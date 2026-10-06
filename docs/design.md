@@ -455,7 +455,9 @@ refused, comparing Records independently of crawl order and rejecting missing Ca
 
 The Run directory stays the primary output (`diff`, Replay and fixtures read it). A Sink
 receives a copy once the Run has finished, so blocking I/O stays out of the crawl and the
-export can be gated on Run Health: `failed` Runs are skipped unless `export --force`.
+export can be gated on Run Health: Runs with Supplied Start Requests are always
+exported so failures reach the Dispatcher; other `failed` Runs are skipped unless
+`export --force`.
 Sinks are chosen per invocation with `--sink` (a deployment concern, not Site config);
 credentials come from the URL or the backend's usual environment. Each Sink is checked
 (driver installed, reachable) before the crawl starts. Each export replaces any earlier
@@ -467,9 +469,12 @@ Exit codes: `export` exits 1 for a skipped or unreadable Run and 3 when a Sink f
 
 - `postgres://…` (`groceries-scraper[postgres]`): one transaction replaces the Run's
   `scrape_runs` row (site, run_id, location, health, manifest) and its `scrape_records` rows
-  (record_type, record_key, data without `_meta`, meta). Tables are created before the
-  first export if missing; tables from before Locations gain `location` (`default` for
-  their Runs). NUL characters, which jsonb rejects, become U+FFFD.
+  (record_type, record_key, data without `_meta`, meta) and `scrape_outcomes` rows
+  (site, run_id, ref, outcome, nullable error, at). Each supplied ref has one outcome;
+  `at` is the export transaction's timestamp. Tables are created before the first
+  export if missing, including `scrape_outcomes` for older databases; tables from
+  before Locations gain `location` (`default` for their Runs). NUL characters in
+  Records and outcome errors become U+FFFD.
 - `s3://<bucket>[/<prefix>]` (`groceries-scraper[s3]`): mirrors `run.json` and
   `records/*.jsonl` to `<prefix>/<site>/<location>/<run_id>/`, removing objects the Run no longer
   has; `run.json` is uploaded last as the completion marker.

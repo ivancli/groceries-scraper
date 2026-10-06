@@ -1358,7 +1358,7 @@ def test_run_exports_its_records_to_a_postgres_sink(tmp_path: Path, shop: _ShopS
 
     dsn = os.environ["TEST_DATABASE_URL"]
     with psycopg.connect(dsn, autocommit=True) as db:
-        db.execute("DROP TABLE IF EXISTS scrape_records, scrape_runs")
+        db.execute("DROP TABLE IF EXISTS scrape_outcomes, scrape_records, scrape_runs")
 
     run_dir, log = _run_with_log(tmp_path, shop, "--sink", dsn)
 
