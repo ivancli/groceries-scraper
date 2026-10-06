@@ -120,7 +120,7 @@ def test_scrape_sinks_points_every_job_at_local_postgres(
     local_postgres: dict[str, dict[str, Any]],
 ) -> None:
     secret = local_postgres["Secret"]
-    assert secret["metadata"]["name"] == "scrape-sinks"  # unhashed: Jobs are created apart
+    assert secret["metadata"]["name"] == "scrape-sinks"  # unhashed: Jobs reference it by name
     assert set(secret["data"]) == {"SCRAPE_SINK", "PGPASSWORD"}
     sink = base64.b64decode(secret["data"]["SCRAPE_SINK"]).decode()
     assert sink == "postgresql://scrape@postgres/scrape"
@@ -133,8 +133,9 @@ def test_backups_run_nightly_to_the_host_as_its_user(
     local_postgres: dict[str, dict[str, Any]],
 ) -> None:
     backup = local_postgres["CronJob"]
+    assert backup["spec"]["schedule"] == "0 3 * * *"
     assert backup["spec"]["concurrencyPolicy"] == "Forbid"
     pod = backup["spec"]["jobTemplate"]["spec"]["template"]["spec"]
-    assert pod["securityContext"]["runAsUser"] == 1000
+    assert pod["securityContext"]["runAsUser"] == pod["securityContext"]["runAsGroup"] == 1000
     (volume,) = pod["volumes"]
     assert volume["hostPath"] == {"path": "/mnt/groceries-scraper/backups", "type": "Directory"}

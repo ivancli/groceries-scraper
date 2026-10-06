@@ -4,6 +4,7 @@ metadata:
   name: postgres-backup
 spec:
   schedule: "0 3 * * *"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 86400  # a PC that was off at 03:00 still backs up when it's back
   successfulJobsHistoryLimit: 1
@@ -20,6 +21,8 @@ spec:
             runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: backup
               image: postgres:16-alpine
@@ -27,7 +30,7 @@ spec:
                 - secretRef:
                     name: scrape-sinks
               env:
-                - name: HOME
+                - name: HOME  # the image has no account for your UID
                   value: /tmp
                 - name: PGHOST
                   value: postgres
@@ -35,15 +38,17 @@ spec:
                   value: scrape
                 - name: PGDATABASE
                   value: scrape
-              # A dump is renamed into place only once complete, and only then are old ones pruned.
+              # Only a complete dump gets a name the pruning counts, so a failed one never displaces a good one.
               command:
                 - /bin/sh
                 - -euc
                 - |
+                  keep=14
                   name="scrape-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  trap 'rm -f "/backups/.$name"' EXIT
                   pg_dump --format=custom --file="/backups/.$name"
                   mv "/backups/.$name" "/backups/$name"
-                  ls /backups | grep -E '^scrape-[0-9TZ]+\.dump$' | sort -r | tail -n +15 \
+                  ls /backups | grep -E '^scrape-[0-9TZ]+\.dump$' | sort -r | tail -n +$((keep + 1)) \
                     | while read -r old; do rm -- "/backups/$old"; done
               securityContext:
                 allowPrivilegeEscalation: false
