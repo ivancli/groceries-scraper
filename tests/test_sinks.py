@@ -83,8 +83,19 @@ def test_a_degraded_run_is_exported(tmp_path: Path) -> None:
     ]
 
 
-def test_an_unfinished_run_cannot_be_exported_even_when_forced(tmp_path: Path) -> None:
-    run = _run(tmp_path, {"product": [{"sku": "a"}]}, health=None)
+def test_a_failed_supplied_run_is_exported_without_force(tmp_path: Path) -> None:
+    run = _run(tmp_path, {}, health="failed", outcomes=[{"ref": "a", "outcome": "blocked"}])
+    sink = FakeSink()
+
+    assert export_run(run, [sink]) is True
+    assert sink.exported == [{"run": ("shop", "20260101T000000Z-abc123", "failed"), "records": {}}]
+
+
+@pytest.mark.parametrize("outcomes", [None, [{"ref": "a", "outcome": "skipped"}]])
+def test_an_unfinished_run_cannot_be_exported_even_when_forced(
+    tmp_path: Path, outcomes: list[dict[str, Any]] | None
+) -> None:
+    run = _run(tmp_path, {"product": [{"sku": "a"}]}, health=None, outcomes=outcomes)
 
     with pytest.raises(ExportError, match="has not finished"):
         export_run(run, [FakeSink()], force=True)

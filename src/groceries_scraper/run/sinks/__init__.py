@@ -53,14 +53,14 @@ def _missing_extra(exc: ModuleNotFoundError, module: str, extra: str) -> Excepti
 
 
 def export_run(path: Path, sinks: Sequence[Sink], force: bool = False) -> bool:
-    """False when skipped: a failed Run must not replace good data downstream unless forced."""
+    """False when skipped: supplied Runs export even failures so every ref can be checked."""
     try:
         run = SavedRun.load(path)
     except RunDirectoryError as exc:
         raise ExportError(str(exc)) from exc
     if run.health is None:
         raise ExportError(f"Run {run.run_id} has not finished: run.json has no Run Health")
-    if run.health == "failed" and not force:
+    if run.health == "failed" and not run.manifest.get("supplied") and not force:
         return False
     failures = []
     for sink in sinks:

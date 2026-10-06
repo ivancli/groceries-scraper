@@ -1,4 +1,4 @@
-"""Stores a Run and its Records in the `scrape_runs` and `scrape_records` tables."""
+"""Stores a Run, its Records and its Start Request Outcomes in Postgres."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS scrape_records (
 );
 CREATE INDEX IF NOT EXISTS scrape_records_by_run ON scrape_records (site, run_id);
 CREATE INDEX IF NOT EXISTS scrape_records_by_key ON scrape_records (site, record_type, record_key);
+CREATE TABLE IF NOT EXISTS scrape_outcomes (
+    site text NOT NULL,
+    run_id text NOT NULL,
+    ref text NOT NULL,
+    outcome text NOT NULL,
+    error text,
+    at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (site, run_id, ref),
+    FOREIGN KEY (site, run_id) REFERENCES scrape_runs ON DELETE CASCADE
+);
 ALTER TABLE scrape_runs ADD COLUMN IF NOT EXISTS location text NOT NULL DEFAULT 'default';
 """
 # Tables from before Locations lack this; their Runs scraped the implicit `default`.
@@ -54,7 +64,10 @@ class PostgresSink:
         """Changes the schema only when out of date, so exports need no DDL rights or locks."""
         try:
             with psycopg.connect(self.dsn) as connection:
-                tables = "SELECT to_regclass('scrape_runs'), to_regclass('scrape_records')"
+                tables = (
+                    "SELECT to_regclass('scrape_runs'), to_regclass('scrape_records'),"
+                    " to_regclass('scrape_outcomes')"
+                )
                 row = connection.execute(tables).fetchone()
                 current = connection.execute(LOCATION_COLUMN).fetchone() is not None
                 if row is None or None in row or not current:
@@ -94,6 +107,19 @@ class PostgresSink:
                                 Jsonb(_storable(meta)),
                             )
                         )
+            with connection.cursor().copy(
+                "COPY scrape_outcomes (site, run_id, ref, outcome, error) FROM STDIN"
+            ) as copy:
+                for outcome in run.outcomes():
+                    copy.write_row(
+                        (
+                            run.site,
+                            run.run_id,
+                            outcome["ref"],
+                            outcome["outcome"],
+                            _storable(outcome.get("error")),
+                        )
+                    )
 
 
 def _storable(value: Any) -> Any:
