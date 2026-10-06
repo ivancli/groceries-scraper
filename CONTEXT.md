@@ -128,6 +128,52 @@ _Avoid_: Output, exporter, destination
 A copy of a finished **Run**'s whole directory (including **Captures** and **Extraction Traces**) in object storage, kept so the **Run** can be inspected or replayed after the machine that ran it is gone.
 _Avoid_: Backup, Sink, upload
 
+### Scheduling and the tracker
+
+**Supplied Start Request**:
+A **Start Request** handed to a **Run** from outside the **Site** configuration (e.g. a product URL from the **Watch List**), replacing the **Site**'s own `start:` list for that **Run**.
+_Avoid_: Target, seed, external URL
+
+**Accepts Rule**:
+A **Site**'s declaration of which URLs it can take as **Supplied Start Requests** (a URL pattern) and which **Page Type** handles them.
+_Avoid_: Targets, route, matcher
+
+**Start Request Outcome**:
+The result reported for one **Supplied Start Request** — `ok`, `failed`, `blocked`, `not_found` or `skipped` — so a missing **Record** is never mistaken for a missing product.
+_Avoid_: Status, result
+
+**Schedule**:
+A **Site**'s minimum interval between checks of the same **Supplied Start Request**, bounded by a global minimum.
+_Avoid_: Cron, frequency config
+
+**Dispatcher**:
+The recurring process that turns the **Watch List** into due **Runs**, records their **Price Observations** and delivers **Price Changes** to the tracker.
+_Avoid_: Scheduler, runner, orchestrator
+
+**Watch List**:
+The tracker's list of product URLs and **Locations** to keep checking; it says what to check, never when.
+_Avoid_: Due list, targets, queue
+
+**Site Catalogue**:
+What the **Dispatcher** tells the tracker it can check: each **Site**'s **Accepts Rule**, **Locations** and **Schedule**.
+_Avoid_: Capabilities, manifest
+
+**Price Observation**:
+One successful check of one product at one **Location**, kept in full in Postgres; never overwritten.
+_Avoid_: Snapshot, price row
+
+**Product State**:
+The price-relevant facts of a **Price Observation** — shelf price, regular price, Deal flag, unit price, price kind and availability.
+_Avoid_: Snapshot, status
+
+**Price Change**:
+A **Price Observation** whose **Product State** differs from the previous successful one for that product and **Location**; the only kind of observation sent to the tracker.
+_Avoid_: Update, delta, event
+
+**Check Health**:
+Whether checks of one product at one **Location** currently succeed (`ok`) or fail (`failing`); only transitions are sent to the tracker.
+_Avoid_: Status, Run Health
+
 ## Relationships
 
 - A **Site** has one or more **Start Requests** and one or more **Page Types**
@@ -156,6 +202,11 @@ _Avoid_: Backup, Sink, upload
 - A **Replay** reads the **Captures** of exactly one prior **Run** and produces a new **Run**
 - A **Run** is exported to zero or more **Sinks** after it finishes; a `failed` **Run** only when forced, and re-exporting replaces the **Sink**'s earlier copy
 - A **Run** has at most one **Archive**, made after it finishes whatever its **Run Health**
+- A **Site** has at most one **Accepts Rule**; a URL matching two **Sites**' rules is a configuration error
+- A **Run** given **Supplied Start Requests** ignores the **Site**'s `start:` list and reports exactly one **Start Request Outcome** per **Supplied Start Request**
+- A **Site** with an **Accepts Rule** has a **Schedule**; the **Dispatcher** decides when each **Watch List** entry is due from its last **Price Observation**
+- Each due (**Site**, **Location**) pair becomes one **Run**
+- A **Price Observation** is a **Price Change** only when its **Product State** differs from the last successful one; a failed check is never a **Price Change**
 
 ## Example dialogue
 
@@ -163,9 +214,13 @@ _Avoid_: Backup, Sink, upload
 > **Domain expert:** "No — it's a **Start Request** for `listing`. The `listing` **Page Type** has a **Follow Rule** into `product`, and another back into `listing` for the next page."
 > **Dev:** "The listing tile has the price but the product page doesn't. Do both emit a `product` **Record** and we merge?"
 > **Domain expert:** "No merging. The **Follow Rule** runs per **Loop** node and passes the price as a **Variable**; only `product` declares the `product` **Record Type**, and its price **Field** reads that **Variable**."
+> **Dev:** "Walnuts were checked 48 times today at the same $5.49. Does the tracker get 48 rows?"
+> **Domain expert:** "No. Postgres keeps all 48 **Price Observations**; the tracker gets a **Price Change** only when the **Product State** moves, plus a daily heartbeat. A timeout is a **Check Health** transition, never a **Price Change**."
 
 ## Flagged ambiguities
 
 - "item" collides with Scrapy's `Item` and the `items:` config key — resolved: an emitted output object is a **Record**.
 - "session" was used both for a store/postcode selection and for a parallel identity — resolved: the selection is a **Location** (per **Run**); identities are **Sessions** in a **Session Pool**.
 - "target" was used for both the whole website and individual URLs — resolved: the website is a **Site**; entry URLs are **Start Requests**.
+- "target" came back for URLs supplied by the tracker — resolved: they are **Supplied Start Requests**, and the **Site**'s declaration is its **Accepts Rule**.
+- "Location" and the tracker's "Home Store" name the same store context from two sides — resolved: a **Home Store** references a **Location** by name; store selection details live only in the **Site**.
