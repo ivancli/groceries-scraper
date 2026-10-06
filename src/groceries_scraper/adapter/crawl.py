@@ -11,7 +11,7 @@ from groceries_scraper.run import Run
 from groceries_scraper.run.health import assess_health
 from groceries_scraper.run.recording import RunRecorder
 from groceries_scraper.run.summary import RunOutcome
-from groceries_scraper.run.supply import SuppliedStartRequest
+from groceries_scraper.run.supply import Supply
 
 
 def crawl(
@@ -19,7 +19,7 @@ def crawl(
     run: Run,
     limit: int | None = None,
     replay_of: SourceRun | None = None,
-    supply: list[SuppliedStartRequest] | None = None,
+    supply: Supply | None = None,
 ) -> RunOutcome:
     """Blocks until the crawl ends; Twisted allows one per process."""
     index = replay_of.index if replay_of is not None else None

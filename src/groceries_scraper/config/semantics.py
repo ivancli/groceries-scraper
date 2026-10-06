@@ -234,8 +234,8 @@ def _incoming_variables(site: Site, reachable: set[str]) -> dict[str, list[Edge]
     available: dict[str, frozenset[str] | None] = dict.fromkeys(reachable)  # None: no path yet
     while True:
         incoming: dict[str, list[Edge]] = defaultdict(list)
-        for path, start in _start_page_types(site):
-            incoming[start].append((path, frozenset()))
+        for path, start_page_type in _start_page_types(site):
+            incoming[start_page_type].append((path, frozenset()))
         for name, page_type in site.page_types.items():
             if (carried := available.get(name)) is None:
                 continue

@@ -206,13 +206,15 @@ A single step mapping is shorthand for a one-step Pipe. Trace records the value 
 
 - The tracker matches the same pattern in JavaScript, so validation requires a leading `^`
   and allows only `(?:…)`, `(?=…)` and `(?!…)` groups: no look-behind, named groups,
-  inline flags or `\A`/`\Z`. Every example must match. The accepted Page Type must not
+  inline flags, `\A`/`\Z`, `{,n}` or possessive quantifiers. Python matches with ASCII-only
+  `\d`/`\w`, as JavaScript does. Every example must match. The accepted Page Type must not
   follow links, so a supplied URL never turns into a crawl; it is reachable like a Start
   Request's Page Type, and gets no Variables.
 - `scrape run --supply FILE` reads JSONL `{"ref": …, "url": …}` and requests those URLs
-  instead of `start:`, each at the accepted Page Type. Refs must be unique. A URL the
-  pattern doesn't match, a malformed line or a Site without `accepts` is refused before
-  any request (exit 1, no Run directory).
+  instead of `start:`, each at the accepted Page Type. Refs and URLs must be unique, and
+  URLs free of whitespace (Python's `$` matches before a trailing newline). A URL the
+  pattern doesn't match, a malformed line, a Site without `accepts` or `--limit` is refused
+  before any request (exit 1, no Run directory).
 - Every Record carries `_meta.ref`. Its `scraped_at` is when its Capture was fetched, so
   a Replay keeps it.
 - `outcomes.jsonl` holds one Start Request Outcome per ref, in supply order:

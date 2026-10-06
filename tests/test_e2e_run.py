@@ -1670,9 +1670,9 @@ def _refused(tmp_path: Path, shop: _ShopServer, supply: list[dict[str, str]] | s
     return _refused_supply(tmp_path, shop)
 
 
-def _refused_supply(tmp_path: Path, shop: _ShopServer) -> str:
+def _refused_supply(tmp_path: Path, shop: _ShopServer, *args: str) -> str:
     result = subprocess.run(
-        [str(SCRAPE), "run", "e2e.yaml", "--supply", "supply.jsonl"],
+        [str(SCRAPE), "run", "e2e.yaml", "--supply", "supply.jsonl", *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -1781,3 +1781,23 @@ def test_refs_never_started_before_the_run_ends_are_skipped(
 
     assert [o["outcome"] for o in _outcomes(run_dir)] == ["skipped", "skipped"]
     assert not any(path.startswith("/p/") for path in shop.paths)
+
+
+def test_a_url_supplied_twice_is_refused(tmp_path: Path, shop: _ShopServer) -> None:
+    supply = [*_refs(shop, "p10"), {"ref": "again", "url": f"{_base(shop)}/p/p10"}]
+
+    assert "URL supplied twice" in _refused(tmp_path, shop, supply)
+
+
+def test_a_url_with_whitespace_is_refused(tmp_path: Path, shop: _ShopServer) -> None:
+    supply = [{"ref": "a", "url": f"{_base(shop)}/p/p10\n"}]
+
+    assert "`url` must be non-empty and free of whitespace" in _refused(tmp_path, shop, supply)
+
+
+def test_limit_does_not_apply_to_a_supplied_run(tmp_path: Path, shop: _ShopServer) -> None:
+    _write_supplied(tmp_path, shop, _refs(shop, "p10", "p11"))
+
+    error = _refused_supply(tmp_path, shop, "--limit", "1")
+
+    assert "--limit cannot be used with --supply" in error
