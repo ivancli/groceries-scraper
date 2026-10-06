@@ -154,14 +154,15 @@ After a failure, the next try waits `every × 2^(n-1)`, capped at 24 hours. Due 
 
 **`scrape dispatch` (#61).** `groceries_scraper.dispatch.dispatcher.Dispatcher.tick(now)`
 runs the five steps in order. In-flight means a dispatch not yet ingested. A Job that
-has finished or disappeared without an ingestable Run, or whose Run cannot be ingested,
-is abandoned: each of its refs gets a `failed` check, which feeds Check Health and
-backoff. The Dispatcher assigns the Run id (`scrape run --run-id`) and the Job name,
-records the dispatch, then creates the Job, then its ConfigMap (the pod waits for the
-volume). A Job that could not be created cancels its dispatch. Dispatched Jobs get
-`backoffLimit: 0`, since a second pod would reuse the Run id; the next tick retries
-instead. A URL repeated within one (Site, Location) waits for a later tick, because a
-Run fetches each URL once. Unroutable entries are reported through
+finished without an ingestable Run, or whose Run cannot be ingested, is abandoned: each
+of its refs gets a `failed` check, which feeds Check Health and backoff. A Job that is
+gone (never created, or deleted) frees its refs without a check. The Dispatcher assigns
+the Run id (`scrape run --run-id`) and the Job name, records the dispatch, then creates
+the Job, then its ConfigMap (the pod waits for the volume). A failed Job create cancels
+the dispatch unless the Job exists anyway; a failed ConfigMap create is logged and the
+Job is abandoned after its deadline. A retried pod of the same Job starts its Run again
+under the same id. A URL repeated within one (Site, Location) waits for a later tick,
+because a Run fetches each URL once. Unroutable entries are reported through
 `DispatchStore.report_outcome`, once per distinct outcome. `--dry-run` posts the outbox
 with `?dry_run=1`, logs the Jobs it would create, and changes nothing else.
 `tests/test_dispatch.py` drives ticks on a fake clock against disposable Postgres, the

@@ -1681,6 +1681,18 @@ def test_a_dispatched_run_keeps_the_run_id_it_was_given(tmp_path: Path, shop: _S
     assert _manifest(run_dir)["run_id"] == "20261006T120000Z-abc123"
 
 
+def test_a_retried_pod_starts_its_dispatched_run_again(tmp_path: Path, shop: _ShopServer) -> None:
+    stale = tmp_path / "runs" / "e2e" / "20261006T120000Z-abc123"
+    stale.mkdir(parents=True)
+    (stale / "partial.txt").write_text("from the evicted pod\n")
+
+    run_dir, _ = _supplied(tmp_path, shop, _refs(shop, "p10"), "--run-id", stale.name)
+
+    assert run_dir == stale
+    assert not (run_dir / "partial.txt").exists()
+    assert (run_dir / "run.json").exists()
+
+
 def _refused(tmp_path: Path, shop: _ShopServer, supply: list[dict[str, str]] | str) -> str:
     """Refused before the crawl: exit 1, no request and no Run directory."""
     _write_supplied(tmp_path, shop, supply)

@@ -14,6 +14,7 @@ from groceries_scraper.config import (
     checked_site,
     load_checked_site,
 )
+from groceries_scraper.config.models import RecordLevel
 from groceries_scraper.run import create_run
 from groceries_scraper.run.archive import (
     Archive,
@@ -46,6 +47,7 @@ LocationOption = Annotated[
 ]
 
 RecordOption = Annotated[str | None, typer.Option(help="all | errors | off")]
+_RECORD_LEVELS: tuple[RecordLevel, ...] = ("all", "errors", "off")
 
 ArchiveOption = Annotated[
     str | None,
@@ -138,11 +140,10 @@ def dispatch(
     from groceries_scraper.run.sinks.postgres import PostgresSink
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    if not sink.startswith(("postgres://", "postgresql://")):
+    (store_sink,) = _open_sinks_or_exit([sink])  # ingestion reads its tables
+    if not isinstance(store_sink, PostgresSink):
         typer.echo("--sink must be a postgresql:// URL", err=True)
         raise typer.Exit(code=1)
-    # Ingestion reads the Sink tables, which may not exist before the first Run.
-    PostgresSink(sink).prepare()
     store = DispatchStore(sink)
     store.prepare()
     Dispatcher(
@@ -295,10 +296,13 @@ def _report_and_exit(
     raise typer.Exit(code=ARCHIVE_FAILED if archive_failed else outcome.health.exit_code)
 
 
-def _record_level(record: str | None) -> str | None:
-    if record not in (None, "all", "errors", "off"):
+def _record_level(record: str | None) -> RecordLevel | None:
+    for level in _RECORD_LEVELS:
+        if record == level:
+            return level
+    if record is not None:
         raise typer.BadParameter("must be all, errors or off", param_hint="--record")
-    return record
+    return None
 
 
 def _warn(warnings: list[str]) -> None:

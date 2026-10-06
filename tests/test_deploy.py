@@ -431,8 +431,6 @@ def test_a_dispatched_run_mounts_its_supply_and_keeps_its_run_id() -> None:
     assert {"name": "supply", "configMap": {"name": "scrape-aldi-picks-default-x7k2p"}} in pod[
         "volumes"
     ]
-    # The Dispatcher retries with backoff; a second pod would reuse the Run id.
-    assert job["spec"]["backoffLimit"] == 0
 
 
 def test_a_run_id_is_only_assigned_to_a_supplied_run(tmp_path: Path) -> None:

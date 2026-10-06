@@ -3,6 +3,7 @@
 import json
 import re
 import secrets
+import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,10 +42,12 @@ def create_run(
     run_id: str | None = None,
 ) -> Run:
     """`run_id` is one the Dispatcher assigned (`new_run_id`) before the Run started."""
-    run_id = run_id or new_run_id(now)
-    path = root / site / run_id
+    path = root / site / (run_id or new_run_id(now))
+    if run_id is not None and path.exists():
+        # A retried pod of the same Job (e.g. after eviction) starts the Run again.
+        shutil.rmtree(path)
     path.mkdir(parents=True)
-    return Run(site, run_id, path, location)
+    return Run(site, path.name, path, location)
 
 
 def read_manifest(path: Path) -> dict[str, Any]:

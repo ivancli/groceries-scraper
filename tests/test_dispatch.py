@@ -56,6 +56,8 @@ class FakeCluster:
         self.config_maps: dict[str, dict[str, Any]] = {}
         self.statuses: dict[str, JobStatus] = {}
         self.refuse_jobs = False
+        self.time_out_after_creating = False
+        self.refuse_config_maps = False
 
     def create_job(self, job: dict[str, Any]) -> str:
         if self.refuse_jobs:
@@ -64,9 +66,13 @@ class FakeCluster:
         assert name not in self.jobs
         self.jobs[name] = job
         self.statuses[name] = "running"
+        if self.time_out_after_creating:
+            raise TimeoutError("the API server answered too late")
         return f"uid-{name}"
 
     def create_config_map(self, config_map: dict[str, Any]) -> None:
+        if self.refuse_config_maps:
+            raise OSError("API server unreachable")
         self.config_maps[config_map["metadata"]["name"]] = config_map
 
     def job_status(self, name: str) -> JobStatus:
@@ -310,6 +316,43 @@ def test_unroutable_entries_are_reported_once_and_disabled_sites_skipped(
         ("homeless", "no_home_store"),
         ("lost", "unknown_location"),
     ]
+
+
+def test_a_job_that_was_never_created_frees_its_refs_without_failing_them(
+    tracker: FakeTracker, dispatcher: Dispatcher, cluster: FakeCluster
+) -> None:
+    tracker.watch_list = [entry("walnuts", ALDI + "walnuts-1")]
+    dispatcher.tick(T0)
+    (name,) = cluster.jobs
+    del cluster.statuses[name]  # e.g. the tick was killed before creating it
+
+    dispatcher.tick(T0 + timedelta(minutes=5))
+
+    assert len(cluster.jobs) == 2
+
+
+def test_a_job_created_despite_an_error_stays_in_flight(
+    tracker: FakeTracker, dispatcher: Dispatcher, cluster: FakeCluster
+) -> None:
+    tracker.watch_list = [entry("walnuts", ALDI + "walnuts-1")]
+    cluster.time_out_after_creating = True
+    with pytest.raises(TimeoutError):
+        dispatcher.tick(T0)
+
+    cluster.time_out_after_creating = False
+    dispatcher.tick(T0 + timedelta(minutes=5))
+    assert len(cluster.jobs) == 1
+
+
+def test_a_config_map_failure_does_not_stop_the_other_jobs(
+    tracker: FakeTracker, dispatcher: Dispatcher, cluster: FakeCluster
+) -> None:
+    tracker.watch_list = [entry("walnuts", ALDI + "walnuts-1"), entry("s1", SHOP + "1", "south")]
+    cluster.refuse_config_maps = True
+
+    dispatcher.tick(T0)
+
+    assert len(cluster.jobs) == 2
 
 
 def test_a_job_that_ends_without_a_run_fails_its_refs_and_frees_them(
