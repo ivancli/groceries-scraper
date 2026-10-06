@@ -289,3 +289,23 @@ def test_a_replay_is_archived_too(
 
     assert result.exit_code == 0, result.output
     assert len(archive.archived) == 1
+
+
+def test_scrape_sink_supplies_the_sinks_when_no_sink_is_passed(
+    crawls: list[HealthLevel], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+
+    def open_sink(url: str) -> FakeSink:
+        opened.append(url)
+        return FakeSink()
+
+    monkeypatch.setattr("groceries_scraper.cli.open_sink", open_sink)
+    crawls.append("ok")
+
+    result = CliRunner().invoke(
+        app, ["run", "site.yaml"], env={"SCRAPE_SINK": "postgres://a/db s3://b/p"}
+    )
+
+    assert result.exit_code == 0, result.output
+    assert opened == ["postgres://a/db", "s3://b/p"]

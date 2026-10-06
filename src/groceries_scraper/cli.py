@@ -35,6 +35,7 @@ SinkOption = Annotated[
     list[str] | None,
     typer.Option(
         "--sink",
+        envvar="SCRAPE_SINK",  # lets a cluster's Secret choose every Job's Sinks
         help="Export the finished Run to postgres://… or s3://<bucket>[/<prefix>]; repeatable.",
     ),
 ]

@@ -10,3 +10,4 @@ dist/
 
 # Run output
 /runs/
+/backups/
