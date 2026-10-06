@@ -412,15 +412,15 @@ including its trailing dash, leaving room for Kubernetes' five-character suffix.
 The Job and pod template get `groceries-scraper/site` and `groceries-scraper/location`
 labels with the exact names. Names that cannot fit a Kubernetes label (at most 63
 characters, alphanumeric at both ends) are rejected rather than changing these labels.
-Location selection follows `run`: declared Locations require `--location`, and a Site
-without any uses `default`.
+Location selection and the `--archive`/`--sink` overlap check follow `run`: declared
+Locations require `--location`, and a Site without any uses `default`.
 
 The first container is the scraper. Its existing args are retained, followed by
 `run <site config> --location <name>` and any repeated `--sink` and `--archive` options.
 It gains an optional `envFrom` reference to `scrape-site-<site>` (the Site name sanitised
 as above), alongside template Secrets, and `SCRAPE_JOB_NAME` from the Downward API's
-`metadata.labels['batch.kubernetes.io/job-name']`. Sink URLs containing a password,
-including those in template args, are rejected with a message pointing to `PGPASSWORD`.
+`metadata.labels['batch.kubernetes.io/job-name']`. Sink URLs containing a password, in
+the userinfo or a `password` query parameter and including those in template args, are rejected with a message pointing to `PGPASSWORD`.
 
 Any Page Type with `render: browser` gives the scraper an in-memory `emptyDir` mounted
 at `/dev/shm` and memory requests of `1Gi` / limit of `2Gi`, preserving CPU settings.

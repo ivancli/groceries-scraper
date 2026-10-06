@@ -100,6 +100,9 @@ _Avoid_: Param, context value, meta
 One execution of a **Site** configuration, identified by a run id, with its own output directory.
 _Avoid_: Job, crawl, execution
 
+**Job**:
+Only the Kubernetes Job that runs one **Run**; never a synonym for the Run itself.
+
 **Capture**:
 The recorded raw HTTP exchange (request + response) for one request in a **Run**.
 _Avoid_: Snapshot, dump, cache entry

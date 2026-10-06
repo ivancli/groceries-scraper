@@ -3,20 +3,28 @@
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 
 from groceries_scraper.config import Site
 
+SITE_LABEL = "groceries-scraper/site"
+LOCATION_LABEL = "groceries-scraper/location"
+SHM_VOLUME = "scrape-shm"
+
+
+class DeployError(Exception):
+    pass
+
+
+class JobTemplateError(DeployError):
+    def __init__(self) -> None:
+        super().__init__("stdin must contain exactly one batch/v1 Job with a container template")
+
 
 def _dns_name(name: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", name.lower()).strip("-")
-
-
-class JobTemplateError(ValueError):
-    def __init__(self) -> None:
-        super().__init__("stdin must contain exactly one batch/v1 Job with a container template")
 
 
 def _mapping(parent: dict[str, Any], key: str) -> dict[str, Any]:
@@ -35,6 +43,13 @@ def _entries(parent: dict[str, Any], key: str) -> list[dict[str, Any]]:
     if not isinstance(value, list) or any(not isinstance(entry, dict) for entry in value):
         raise JobTemplateError()
     return value
+
+
+def _replace_entry(parent: dict[str, Any], key: str, field: str, new: dict[str, Any]) -> None:
+    """Re-rendering an already rendered Job must not duplicate the entry."""
+    parent[key] = [entry for entry in _entries(parent, key) if entry.get(field) != new[field]] + [
+        new
+    ]
 
 
 def _read_job(template: str) -> dict[str, Any]:
@@ -70,12 +85,25 @@ def _refuse_sink_passwords(args: list[str]) -> None:
         else:
             continue
         try:
-            password = urlsplit(url).password
+            parts = urlsplit(url)
+            password = parts.password
         except ValueError:
-            raise ValueError("invalid --sink URL") from None
-        if password is not None:
-            raise ValueError(
+            raise DeployError("invalid --sink URL") from None
+        # libpq also reads a password from the query string.
+        if password is not None or "password" in parse_qs(parts.query, keep_blank_values=True):
+            raise DeployError(
                 "--sink URLs must not contain a password; supply it through PGPASSWORD"
+            )
+
+
+def _refuse_unlabelled_names(site: Site, location: str) -> None:
+    for kind, value in (("Site", site.site), ("Location", location)):
+        if len(value) > 63 or not re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?", value
+        ):
+            raise DeployError(
+                f"{kind} name cannot be an exact Kubernetes label: use 1–63 letters, digits, "
+                "`_`, `-` or `.`, starting and ending with a letter or digit"
             )
 
 
@@ -84,71 +112,60 @@ def render_job(
     site: Site,
     site_config: Path,
     location: str,
-    sinks: list[str],
-    archive: str | None,
+    sink_urls: list[str],
+    archive_url: str | None,
 ) -> str:
     job = _read_job(template)
-    for label, value in (("Site", site.site), ("Location", location)):
-        if len(value) > 63 or not re.fullmatch(
-            r"[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?", value
-        ):
-            raise ValueError(
-                f"{label} name cannot be an exact Kubernetes label: use 1–63 letters, digits, "
-                "`_`, `-` or `.`, starting and ending with a letter or digit"
-            )
+    _refuse_unlabelled_names(site, location)
     metadata = _mapping(job, "metadata")
     metadata.pop("name", None)
     # Kubernetes adds five random characters; the completed Job name must fit in 63.
     name = f"scrape-{_dns_name(site.site)}-{_dns_name(location)}"
     metadata["generateName"] = name[:57].rstrip("-") + "-"
-    labels = {"groceries-scraper/site": site.site, "groceries-scraper/location": location}
+    labels = {SITE_LABEL: site.site, LOCATION_LABEL: location}
     _mapping(metadata, "labels").update(labels)
     pod = job["spec"]["template"]
     _mapping(_mapping(pod, "metadata"), "labels").update(labels)
     container = pod["spec"]["containers"][0]
-    args = ["run", str(site_config), "--location", location]
-    for sink in sinks:
-        args.extend(["--sink", sink])
-    if archive is not None:
-        args.extend(["--archive", archive])
-    template_args = container.get("args")
-    if template_args is None:
-        template_args = container["args"] = []
-    if not isinstance(template_args, list) or any(
-        not isinstance(arg, str) for arg in template_args
-    ):
+
+    args = container.get("args")
+    if args is None:
+        args = container["args"] = []
+    if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
         raise JobTemplateError()
-    template_args.extend(args)
-    _refuse_sink_passwords(container["args"])
-    secret_name = f"scrape-site-{_dns_name(site.site)}"
+    args.extend(["run", str(site_config), "--location", location])
+    for url in sink_urls:
+        args.extend(["--sink", url])
+    if archive_url is not None:
+        args.extend(["--archive", archive_url])
+    _refuse_sink_passwords(args)
+
+    secret_ref = {"name": f"scrape-site-{_dns_name(site.site)}", "optional": True}
     container["envFrom"] = [
         entry
         for entry in _entries(container, "envFrom")
-        if "secretRef" not in entry or _mapping(entry, "secretRef").get("name") != secret_name
-    ] + [{"secretRef": {"name": secret_name, "optional": True}}]
-    env: list[dict[str, Any]] = [
-        entry for entry in _entries(container, "env") if entry.get("name") != "SCRAPE_JOB_NAME"
-    ]
-    container["env"] = env
-    env.append(
+        if "secretRef" not in entry
+        or _mapping(entry, "secretRef").get("name") != secret_ref["name"]
+    ] + [{"secretRef": secret_ref}]
+    _replace_entry(
+        container,
+        "env",
+        "name",
         {
             "name": "SCRAPE_JOB_NAME",
             "valueFrom": {
                 "fieldRef": {"fieldPath": "metadata.labels['batch.kubernetes.io/job-name']"}
             },
-        }
+        },
     )
     if any(page_type.render == "browser" for page_type in site.page_types.values()):
-        pod["spec"]["volumes"] = [
-            volume
-            for volume in _entries(pod["spec"], "volumes")
-            if volume.get("name") != "scrape-shm"
-        ] + [{"name": "scrape-shm", "emptyDir": {"medium": "Memory"}}]
-        container["volumeMounts"] = [
-            mount
-            for mount in _entries(container, "volumeMounts")
-            if mount.get("mountPath") != "/dev/shm"
-        ] + [{"name": "scrape-shm", "mountPath": "/dev/shm"}]
+        # Chromium needs more shared memory than a container's default 64Mi.
+        _replace_entry(
+            pod["spec"], "volumes", "name", {"name": SHM_VOLUME, "emptyDir": {"medium": "Memory"}}
+        )
+        _replace_entry(
+            container, "volumeMounts", "mountPath", {"name": SHM_VOLUME, "mountPath": "/dev/shm"}
+        )
         resources = _mapping(container, "resources")
         _mapping(resources, "requests")["memory"] = "1Gi"
         _mapping(resources, "limits")["memory"] = "2Gi"

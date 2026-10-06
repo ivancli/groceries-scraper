@@ -31,6 +31,11 @@ SinkOption = Annotated[
     ),
 ]
 
+LocationOption = Annotated[
+    str | None,
+    typer.Option(help="The Location to scrape; required when the Site declares any."),
+]
+
 ArchiveOption = Annotated[
     str | None,
     typer.Option(
@@ -49,15 +54,16 @@ app.add_typer(deploy_app, name="deploy")
 @deploy_app.command("job")
 def deploy_job(
     site_config: Path,
-    location: Annotated[str | None, typer.Option(help="The Location this Run scrapes.")] = None,
+    location: LocationOption = None,
     sink: SinkOption = None,
     archive_url: ArchiveOption = None,
 ) -> None:
     """Read one Job template on stdin and write the Job for this Run on stdout."""
-    from groceries_scraper.deploy import render_job
+    from groceries_scraper.deploy import DeployError, render_job
 
     site = _load_site_or_exit(site_config)
     location_name = _location_or_exit(site, location)
+    _refuse_overlap_or_exit(archive_url, sink)
     try:
         rendered = render_job(
             typer.get_text_stream("stdin").read(),
@@ -67,7 +73,7 @@ def deploy_job(
             sink or [],
             archive_url,
         )
-    except ValueError as exc:
+    except DeployError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
     typer.echo(rendered, nl=False)
@@ -202,10 +208,7 @@ def run(
     site_config: Path,
     limit: Annotated[int | None, typer.Option(min=1, help="Stop after N Records.")] = None,
     record: Annotated[str | None, typer.Option(help="all | errors | off")] = None,
-    location: Annotated[
-        str | None,
-        typer.Option(help="The Location to scrape; required when the Site declares any."),
-    ] = None,
+    location: LocationOption = None,
     supply: Annotated[
         Path | None,
         typer.Option(
