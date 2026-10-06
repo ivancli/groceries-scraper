@@ -1,0 +1,11 @@
+# A k3d cluster whose node maps the repo's runs/ and sites/ (see README), so a Job's Run
+# lands in ./runs and edited Site configs apply without rebuilding the image. No Archive.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: groceries-scraper
+    newTag: dev
+patches:
+  - path: job.yaml
