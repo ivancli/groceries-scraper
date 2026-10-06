@@ -1,4 +1,8 @@
 CREATE SCHEMA IF NOT EXISTS dispatch;
+CREATE TABLE IF NOT EXISTS dispatch.collector_state (
+    key text PRIMARY KEY,
+    value text NOT NULL
+);
 CREATE TABLE IF NOT EXISTS dispatch.watch_entries (
     ref text PRIMARY KEY,
     url text NOT NULL,
@@ -76,5 +80,6 @@ CREATE TABLE IF NOT EXISTS dispatch.outbox (
 );
 CREATE INDEX IF NOT EXISTS outbox_pending ON dispatch.outbox (created_at, id)
     WHERE sent_at IS NULL;
+ALTER TABLE dispatch.outbox ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz;
 CREATE INDEX IF NOT EXISTS heartbeats_by_ref ON dispatch.outbox ((payload->>'ref'), created_at)
     WHERE kind = 'heartbeat';

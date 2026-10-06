@@ -31,6 +31,13 @@ STATE_FIELDS = (
 
 
 @dataclass(frozen=True)
+class PendingItem:
+    id: str
+    payload: dict[str, Any]
+    next_attempt_at: datetime | None
+
+
+@dataclass(frozen=True)
 class DispatchStore:
     dsn: str = field(repr=False)
 
@@ -38,6 +45,74 @@ class DispatchStore:
         with psycopg.connect(self.dsn) as connection:
             connection.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK,))
             connection.execute(Path(__file__).with_name("schema.sql").read_text())
+
+    def pending_batch(self, *, limit: int = 100, offset: int = 0) -> list[PendingItem]:
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            rows = connection.execute(
+                "SELECT id, payload, next_attempt_at FROM dispatch.outbox WHERE sent_at IS NULL"
+                " ORDER BY created_at, id LIMIT %s OFFSET %s",
+                (limit, offset),
+            ).fetchall()
+            return [PendingItem(**row) for row in rows]
+
+    def finish_delivery(self, acked: list[str], rejected: dict[str, str], at: datetime) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            connection.execute(
+                "UPDATE dispatch.outbox SET sent_at = %s, attempts = attempts + 1,"
+                " last_error = NULL, next_attempt_at = NULL"
+                " WHERE id = ANY(%s) AND sent_at IS NULL",
+                (at, acked),
+            )
+            for item_id, reason in rejected.items():
+                connection.execute(
+                    "UPDATE dispatch.outbox SET sent_at = %s, attempts = attempts + 1,"
+                    " last_error = %s, next_attempt_at = NULL"
+                    " WHERE id = %s AND sent_at IS NULL",
+                    (at, reason, item_id),
+                )
+
+    def fail_delivery(self, ids: list[str], error: str, at: datetime) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            connection.execute(
+                "UPDATE dispatch.outbox SET attempts = attempts + 1, last_error = %s,"
+                " next_attempt_at = %s + interval '1 second' *"
+                " least(3600, 60 * power(2, least(attempts, 6)))"
+                " WHERE id = ANY(%s) AND sent_at IS NULL",
+                (error, at, ids),
+            )
+
+    def collector_state(self, key: str) -> str | None:
+        with psycopg.connect(self.dsn) as connection:
+            row = connection.execute(
+                "SELECT value FROM dispatch.collector_state WHERE key = %s",
+                (key,),
+            ).fetchone()
+            return row[0] if row is not None else None
+
+    def save_collector_state(self, key: str, value: str) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            _save_collector_state(connection, key, value)
+
+    def watch_list(self) -> tuple[str | None, list[dict[str, Any]]]:
+        with psycopg.connect(self.dsn, row_factory=dict_row) as connection:
+            row = connection.execute(
+                "SELECT value FROM dispatch.collector_state WHERE key = 'watch_etag'",
+            ).fetchone()
+            entries = connection.execute(
+                "SELECT ref, url, location, check_soon FROM dispatch.watch_entries ORDER BY ref",
+            ).fetchall()
+            return (row["value"] if row is not None else None), entries
+
+    def replace_watch_list(self, entries: list[dict[str, Any]], etag: str) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            connection.execute("DELETE FROM dispatch.watch_entries")
+            for entry in entries:
+                connection.execute(
+                    "INSERT INTO dispatch.watch_entries (ref, url, location, check_soon, etag)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (entry["ref"], entry["url"], entry["location"], entry["check_soon"], etag),
+                )
+            _save_collector_state(connection, "watch_etag", etag)
 
     def record_dispatch(
         self,
@@ -264,6 +339,14 @@ class DispatchStore:
             " SET last_heartbeat_date = greatest(last_heartbeat_date, %s) WHERE ref = %s",
             (today, ref),
         )
+
+
+def _save_collector_state(connection: psycopg.Connection[Any], key: str, value: str) -> None:
+    connection.execute(
+        "INSERT INTO dispatch.collector_state (key, value) VALUES (%s, %s)"
+        " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        (key, value),
+    )
 
 
 def _product_state(data: dict[str, Any]) -> dict[str, Any]:
