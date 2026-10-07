@@ -1,0 +1,11 @@
+# `scrape janitor` daily, applied once with `kubectl apply -k`; it needs the Postgres step.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: groceries-scraper
+resources:
+  - cronjob.yaml
+images:
+  - name: groceries-scraper
+    newTag: dev

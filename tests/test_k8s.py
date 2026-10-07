@@ -207,3 +207,33 @@ def test_the_job_template_the_dispatcher_reads_is_the_local_job(
     assert result.exit_code == 0, result.output
     pod = yaml.safe_load(result.stdout)["spec"]["template"]["spec"]
     assert {"name": "supply", "configMap": {"name": "cm"}} in pod["volumes"]
+
+
+@pytest.fixture(scope="module")
+def local_janitor() -> dict[str, Any]:
+    (cron,) = yaml.safe_load_all(_build(LOCAL / "janitor"))
+    assert isinstance(cron, dict)
+    return cron
+
+
+def test_the_janitor_sweeps_the_hosts_runs_daily_without_cluster_access(
+    local_janitor: dict[str, Any], local_job: dict[str, Any]
+) -> None:
+    assert local_janitor["kind"] == "CronJob"
+    assert local_janitor["spec"]["schedule"] == "30 3 * * *"
+    assert local_janitor["spec"]["concurrencyPolicy"] == "Forbid"
+    assert local_janitor["spec"]["startingDeadlineSeconds"] == 86400
+    pod = local_janitor["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    assert pod["automountServiceAccountToken"] is False
+    assert pod["securityContext"]["runAsUser"] == pod["securityContext"]["runAsGroup"] == 1000
+    (container,) = pod["containers"]
+    assert container["image"] == "groceries-scraper:dev"
+    assert container["args"] == ["janitor"]
+    assert container["envFrom"] == [{"secretRef": {"name": "scrape-sinks"}}]
+    # The same host directory, at the same path, that Jobs write their Runs to.
+    job_pod = local_job["spec"]["template"]["spec"]
+    job_runs = {v["name"]: v for v in job_pod["volumes"]}["runs"]["hostPath"]
+    (volume,) = pod["volumes"]
+    assert volume["hostPath"] == job_runs
+    (mount,) = container["volumeMounts"]
+    assert mount == {"name": volume["name"], "mountPath": "/app/runs"}

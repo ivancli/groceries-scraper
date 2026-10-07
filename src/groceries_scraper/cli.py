@@ -157,6 +157,38 @@ def dispatch(
 
 
 @app.command()
+def janitor(
+    sink: Annotated[
+        str,
+        typer.Option(
+            "--sink", envvar="SCRAPE_SINK", help="postgresql://… holding the Dispatcher store."
+        ),
+    ],
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="List what would be deleted; delete nothing.")
+    ] = False,
+) -> None:
+    """Delete dispatched Runs' directories and Sink Records past retention; keep price history."""
+    from datetime import UTC, datetime
+
+    from groceries_scraper.dispatch.janitor import sweep
+    from groceries_scraper.dispatch.store import DispatchStore
+    from groceries_scraper.run.sinks.postgres import PostgresSink
+
+    (store_sink,) = _open_sinks_or_exit([sink])
+    if not isinstance(store_sink, PostgresSink):
+        typer.echo("--sink must be a postgresql:// URL", err=True)
+        raise typer.Exit(code=1)
+    DispatchStore(sink).prepare()
+    swept = sweep(sink, RUNS_DIR, datetime.now(UTC), dry_run=dry_run)
+    verb = "Would delete" if dry_run else "Deleted"
+    for path in swept.run_dirs:
+        typer.echo(f"{verb} Run directory {path}")
+    for site, run_id in swept.sink_runs:
+        typer.echo(f"{verb} Sink Records and Outcomes of Run {site}/{run_id}")
+
+
+@app.command()
 def validate(site_config: Path) -> None:
     """Validate a Site config, or every `*.yaml` in a directory and their Accepts Rules together."""
     if not site_config.is_dir():
