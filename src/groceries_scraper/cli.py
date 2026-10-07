@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 
@@ -27,6 +27,9 @@ from groceries_scraper.run.directory import RUN_ID, RunDirectoryError, SavedRun
 from groceries_scraper.run.sinks import ExportError, Sink, SinkError, export_run, open_sink
 from groceries_scraper.run.summary import RunOutcome
 from groceries_scraper.run.supply import Supply, SupplyError
+
+if TYPE_CHECKING:
+    from groceries_scraper.dispatch.store import DispatchStore
 
 RUNS_DIR = Path("runs")
 EXPORT_FAILED = 3  # beyond Run Health's 0 / 1 / 2
@@ -136,16 +139,9 @@ def dispatch(
     from groceries_scraper.dispatch.collector import CollectorClient
     from groceries_scraper.dispatch.dispatcher import Dispatcher
     from groceries_scraper.dispatch.kubernetes import KubernetesCluster
-    from groceries_scraper.dispatch.store import DispatchStore
-    from groceries_scraper.run.sinks.postgres import PostgresSink
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    (store_sink,) = _open_sinks_or_exit([sink])  # ingestion reads its tables
-    if not isinstance(store_sink, PostgresSink):
-        typer.echo("--sink must be a postgresql:// URL", err=True)
-        raise typer.Exit(code=1)
-    store = DispatchStore(sink)
-    store.prepare()
+    store = _dispatch_store_or_exit(sink)
     Dispatcher(
         store=store,
         collector=CollectorClient(tracker_url, store),
@@ -168,10 +164,22 @@ def janitor(
         bool, typer.Option("--dry-run", help="List what would be deleted; delete nothing.")
     ] = False,
 ) -> None:
-    """Delete dispatched Runs' directories and Sink Records past retention; keep price history."""
+    """Delete dispatched Runs' directories and exported Records past retention; keep history."""
     from datetime import UTC, datetime
 
     from groceries_scraper.dispatch.janitor import sweep
+
+    _dispatch_store_or_exit(sink)
+    swept = sweep(sink, RUNS_DIR, datetime.now(UTC), dry_run=dry_run)
+    verb = "Would delete" if dry_run else "Deleted"
+    for path in swept.run_dirs:
+        typer.echo(f"{verb} Run directory {path}")
+    for site, run_id in swept.exported:
+        typer.echo(f"{verb} Records and Start Request Outcomes of Run {site}/{run_id}")
+
+
+def _dispatch_store_or_exit(sink: str) -> "DispatchStore":
+    """The store shares the Sink's database: ingestion and the janitor read its tables."""
     from groceries_scraper.dispatch.store import DispatchStore
     from groceries_scraper.run.sinks.postgres import PostgresSink
 
@@ -179,13 +187,9 @@ def janitor(
     if not isinstance(store_sink, PostgresSink):
         typer.echo("--sink must be a postgresql:// URL", err=True)
         raise typer.Exit(code=1)
-    DispatchStore(sink).prepare()
-    swept = sweep(sink, RUNS_DIR, datetime.now(UTC), dry_run=dry_run)
-    verb = "Would delete" if dry_run else "Deleted"
-    for path in swept.run_dirs:
-        typer.echo(f"{verb} Run directory {path}")
-    for site, run_id in swept.sink_runs:
-        typer.echo(f"{verb} Sink Records and Outcomes of Run {site}/{run_id}")
+    store = DispatchStore(sink)
+    store.prepare()
+    return store
 
 
 @app.command()

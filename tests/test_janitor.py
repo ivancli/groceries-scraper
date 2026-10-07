@@ -16,17 +16,14 @@ from groceries_scraper.run.directory import SavedRun
 from groceries_scraper.run.sinks.postgres import PostgresSink
 from groceries_scraper.run.supply import write_jsonl
 
-DSN = os.environ.get("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    DSN is None, reason="set TEST_DATABASE_URL to a disposable database"
-)
+DSN = os.environ.get("TEST_DATABASE_URL", "")
+pytestmark = pytest.mark.skipif(not DSN, reason="set TEST_DATABASE_URL to a disposable database")
 NOW = datetime(2026, 10, 8, tzinfo=UTC)
 REF = "walnuts@default"
 
 
 @pytest.fixture
 def db() -> Iterator[psycopg.Connection[tuple[Any, ...]]]:
-    assert DSN is not None
     with psycopg.connect(DSN, autocommit=True) as connection:
         connection.execute("DROP SCHEMA IF EXISTS dispatch CASCADE")
         connection.execute("DROP TABLE IF EXISTS scrape_outcomes, scrape_records, scrape_runs")
@@ -48,7 +45,7 @@ def run_dir(
     run_id = f"{created_at:%Y%m%dT%H%M%SZ}-{suffix}"
     path = saved_run(root, {}, health=health, run_id=run_id, location="default", outcomes=outcomes)
     if dispatched:
-        DispatchStore(DSN or "").record_dispatch(
+        DispatchStore(DSN).record_dispatch(
             site="shop",
             location="default",
             run_id=run_id,
@@ -73,9 +70,9 @@ def ingested_run(root: Path, days_old: int, suffix: str, *, ingest: bool = True)
             }
         ],
     )
-    PostgresSink(DSN or "").export(SavedRun.load(path))
+    PostgresSink(DSN).export(SavedRun.load(path))
     if ingest:
-        assert DispatchStore(DSN or "").ingest("shop", path.name)
+        assert DispatchStore(DSN).ingest("shop", path.name)
     return path.name
 
 
@@ -101,9 +98,9 @@ def test_sink_rows_of_ingested_runs_go_after_14_days_but_price_history_stays(
     recent = ingested_run(tmp_path, 10, "bbbbbb")
     pending = ingested_run(tmp_path, 20, "cccccc", ingest=False)
 
-    swept = sweep(DSN or "", tmp_path, NOW)
+    swept = sweep(DSN, tmp_path, NOW)
 
-    assert swept.sink_runs == [("shop", old)]
+    assert swept.exported == [("shop", old)]
     assert counts(db, old) == {
         "scrape_runs": 1,
         "scrape_records": 0,
@@ -125,7 +122,7 @@ def test_run_directories_are_kept_14_days_or_60_when_failed_or_degraded(
     }
     unfinished = run_dir(tmp_path, 20, None, "d0d0d0")  # crashed: kept like a failed Run
 
-    swept = sweep(DSN or "", tmp_path, NOW)
+    swept = sweep(DSN, tmp_path, NOW)
 
     deleted = {key for key, path in runs.items() if not path.exists()}
     assert deleted == {(20, "ok"), (70, "ok"), (70, "degraded"), (70, "failed")}
@@ -137,11 +134,11 @@ def test_manual_runs_are_never_touched(
     db: psycopg.Connection[tuple[Any, ...]], tmp_path: Path
 ) -> None:
     manual = run_dir(tmp_path, 70, "ok", "eeeeee", dispatched=False)
-    PostgresSink(DSN or "").export(SavedRun.load(manual))
+    PostgresSink(DSN).export(SavedRun.load(manual))
     replay = tmp_path / "shop" / "20260101T000000Z-ffffff"  # same Site, never dispatched
     replay.mkdir()
 
-    assert sweep(DSN or "", tmp_path, NOW) == Swept()
+    assert sweep(DSN, tmp_path, NOW) == Swept()
 
     assert manual.exists() and replay.exists()
     assert counts(db, manual.name)["scrape_runs"] == 1
@@ -153,13 +150,13 @@ def test_a_dry_run_lists_what_it_would_delete_and_deletes_nothing(
     old = ingested_run(tmp_path, 20, "aaaaaa")
     before = counts(db, old)
 
-    swept = sweep(DSN or "", tmp_path, NOW, dry_run=True)
+    swept = sweep(DSN, tmp_path, NOW, dry_run=True)
 
-    assert swept == Swept(run_dirs=[tmp_path / "shop" / old], sink_runs=[("shop", old)])
+    assert swept == Swept(run_dirs=[tmp_path / "shop" / old], exported=[("shop", old)])
     assert (tmp_path / "shop" / old).exists()
     assert counts(db, old) == before
-    assert sweep(DSN or "", tmp_path, NOW) == swept  # then the real sweep deletes the same
-    assert sweep(DSN or "", tmp_path, NOW) == Swept()
+    assert sweep(DSN, tmp_path, NOW) == swept  # then the real sweep deletes the same
+    assert sweep(DSN, tmp_path, NOW) == Swept()
 
 
 def test_scrape_janitor_reports_each_deletion_and_dry_run_says_would(
@@ -167,14 +164,14 @@ def test_scrape_janitor_reports_each_deletion_and_dry_run_says_would(
 ) -> None:
     old = ingested_run(tmp_path / "runs", 70, "aaaaaa")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SCRAPE_SINK", DSN or "")
+    monkeypatch.setenv("SCRAPE_SINK", DSN)
 
     dry = CliRunner().invoke(app, ["janitor", "--dry-run"])
 
     assert dry.exit_code == 0, dry.output
     assert dry.stdout.splitlines() == [
         f"Would delete Run directory runs/shop/{old}",
-        f"Would delete Sink Records and Outcomes of Run shop/{old}",
+        f"Would delete Records and Start Request Outcomes of Run shop/{old}",
     ]
     assert (tmp_path / "runs" / "shop" / old).exists()
 
@@ -183,6 +180,6 @@ def test_scrape_janitor_reports_each_deletion_and_dry_run_says_would(
     assert real.exit_code == 0, real.output
     assert real.stdout.splitlines() == [
         f"Deleted Run directory runs/shop/{old}",
-        f"Deleted Sink Records and Outcomes of Run shop/{old}",
+        f"Deleted Records and Start Request Outcomes of Run shop/{old}",
     ]
     assert not (tmp_path / "runs" / "shop" / old).exists()

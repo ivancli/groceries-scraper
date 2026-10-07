@@ -283,7 +283,7 @@ manual ones, so `kubectl get jobs -l groceries-scraper/site=aldi_picks` shows th
 ([`deploy/k8s/overlays/local/janitor`](deploy/k8s/overlays/local/janitor)). It deletes
 dispatched Run directories under `runs/` after 14 days, or 60 days for `failed`,
 `degraded` and unfinished ones, and the `scrape_records` and `scrape_outcomes` rows of
-ingested dispatched Runs after 14 days. Runs it didn't dispatch, `scrape_runs`, checks and
+ingested dispatched Runs after 14 days. Runs the Dispatcher didn't create, `scrape_runs`, checks and
 Price Observations are kept. To see what it would delete, then sweep now:
 
 ```bash
