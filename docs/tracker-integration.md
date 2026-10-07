@@ -1,6 +1,6 @@
 # Tracker integration: tech plan
 
-Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56); Schedules, the Price Record contract and `aldi_picks` opting in (#57); the Dispatcher store (#59), Collector client (#60) and `scrape dispatch` (#61). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
+Status: design accepted 2026-10-06. Implemented so far: `scrape run --supply` and the Accepts Rule (#56); Schedules, the Price Record contract and `aldi_picks` opting in (#57); the Dispatcher store (#59), Collector client (#60) `scrape dispatch` (#61) and `scrape janitor` (#63). Decisions: [ADR-0004](adr/0004-price-history-local-changes-to-tracker.md), [ADR-0005](adr/0005-dispatcher-schedules-supplied-start-requests.md). The Collector API contract is owned by the tracker: [groceries-tracker `docs/scraper-integration.md`](https://github.com/ivancli/groceries-tracker/blob/main/docs/scraper-integration.md). Terms: [CONTEXT.md](../CONTEXT.md). This resolves #44.
 
 ## Flow
 
@@ -177,8 +177,9 @@ fake tracker and an in-memory cluster.
 ## Retention
 
 - Dispatched Runs use `record_level: errors`; manual Runs keep `all`.
-- A janitor CronJob deletes Run directories after 14 days, and `failed`/`degraded` ones after 60 days.
-- It also deletes the generic `scrape_records` rows of ingested dispatched Runs after 14 days. `price_observations` and `checks` are kept.
+- A janitor CronJob (`scrape janitor`, #63) deletes dispatched Run directories after 14 days, and `failed`/`degraded` ones after 60 days. A Run without a readable Run Health counts as failed. Age is the dispatch's `created_at`.
+- It also deletes the generic `scrape_records` and `scrape_outcomes` rows of ingested dispatched Runs after 14 days. `scrape_runs`, `price_observations` and `checks` are kept.
+- Runs not in `dispatch.dispatches` (manual Runs, Replays) are never touched. `--dry-run` lists what would be deleted.
 - A nightly `pg_dump` CronJob writes to a host path. This Postgres is the system of record for price history (ADR-0004).
 
 ## Local cluster additions (local overlay, #50)

@@ -277,6 +277,21 @@ Re-run the `scrape-job-template` line after changing the local overlay. The Disp
 ServiceAccount may only create and get Jobs and ConfigMaps. Its Jobs are labelled like
 manual ones, so `kubectl get jobs -l groceries-scraper/site=aldi_picks` shows them.
 
+### Clean up dispatched Runs
+
+`scrape janitor` runs daily at 03:30 UTC (or when the PC is next on) as a CronJob
+([`deploy/k8s/overlays/local/janitor`](deploy/k8s/overlays/local/janitor)). It deletes
+dispatched Run directories under `runs/` after 14 days, or 60 days for `failed`,
+`degraded` and unfinished ones, and the `scrape_records` and `scrape_outcomes` rows of
+ingested dispatched Runs after 14 days. Runs it didn't dispatch, `scrape_runs`, checks and
+Price Observations are kept. To see what it would delete, then sweep now:
+
+```bash
+kubectl apply -k deploy/k8s/overlays/local/janitor
+SCRAPE_SINK=postgresql://… uv run scrape janitor --dry-run  # from the repository root
+kubectl create job --from=cronjob/scrape-janitor scrape-janitor-now
+```
+
 ### Back up and restore the cluster's Postgres
 
 This database is the system of record for price history

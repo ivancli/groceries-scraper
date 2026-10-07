@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scrape-janitor
+spec:
+  schedule: "30 3 * * *"  # after the 03:00 backup
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 86400  # a PC that was off at 03:30 still sweeps when it's back
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          # hostPath files keep the pod's UID, so run as yours: change both if `id -u`/`id -g` aren't 1000.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: janitor
+              image: groceries-scraper
+              imagePullPolicy: Never  # imported with `k3d image import`, never pulled
+              args: [janitor]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: HOME  # the image has no account for your UID, which leaves an unwritable /
+                  value: /tmp
+              envFrom:
+                - secretRef:
+                    name: scrape-sinks  # the Dispatcher store and the Sink tables it prunes
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: runs
+                  mountPath: /app/runs
+          volumes:
+            - name: runs
+              hostPath:
+                path: /mnt/groceries-scraper/runs
+                type: Directory
