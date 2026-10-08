@@ -71,6 +71,8 @@ class CollectorClient:
             "CF-Access-Client-Secret": os.environ["CF_ACCESS_CLIENT_SECRET"],
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # Cloudflare refuses Python-urllib's default User-Agent with 403 (error 1010).
+            "User-Agent": "groceries-scraper-dispatcher",
         }
 
     def refresh_watch_list(self) -> bool:
