@@ -76,6 +76,24 @@ def test_250_items_are_delivered_oldest_first_in_three_authenticated_batches(
     assert store.pending_batch() == []
 
 
+def test_every_request_names_the_dispatcher_so_cloudflare_does_not_block_it(
+    tracker: FakeTracker,
+    store: DispatchStore,
+) -> None:
+    # Cloudflare answers Python-urllib's default User-Agent with 403 (error 1010).
+    tracker.watch_list = []
+    enqueue(store, 1)
+    client = CollectorClient(tracker.url, store)
+
+    client.refresh_watch_list()
+    client.publish_site_catalogue(Path("sites"))
+    client.deliver_changes(now=NOW)
+
+    assert [method for method, _, _, _ in tracker.requests] == ["GET", "PUT", "POST"]
+    for _, _, headers, _ in tracker.requests:
+        assert headers["User-Agent"] == "groceries-scraper-dispatcher"
+
+
 @pytest.mark.parametrize("failure_status", [503, 0])
 def test_failed_second_batch_keeps_150_items_and_retries_after_backoff_on_the_next_tick(
     tracker: FakeTracker,
