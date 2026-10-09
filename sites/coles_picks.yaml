@@ -1,0 +1,71 @@
+# Coles products listed under `start` or supplied by the Dispatcher, read from their product pages.
+site: coles_picks
+settings:
+  download_delay: 1.0
+  record_level: all
+  # Incapsula serves a bot challenge to any User-Agent that isn't a browser's.
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+schedule: {every: 30m}
+accepts:
+  page_type: product
+  url: '^https://www\.coles\.com\.au/product/'
+  examples:
+    - https://www.coles.com.au/product/cocobella-protein-coconut-yoghurt-pouch-vanilla-160g-1157085
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.coles.com.au/product/cocobella-protein-coconut-yoghurt-pouch-vanilla-160g-1157085
+    page_type: product
+  - url: https://www.coles.com.au/product/coles-full-cream-milk-3l-8150288
+    page_type: product
+page_types:
+  product:
+    record: product
+    # Everything but the URL comes from the page's Next.js JSON; its styling classes are unstable.
+    fields:
+      url: {xpath: "//link[@rel='canonical']/@href", type: string, required: true}
+      name:
+        type: string
+        required: true
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.name"}
+      brand:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.brand"}
+      price:
+        type: number
+        required: true
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.pricing.now"}
+      # `was` is null or 0 when the product isn't on special; the regex keeps only non-zero amounts.
+      regular_price:
+        type: number
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.pricing.was"}
+          - {regex: '^(?=.*[1-9]).*$'}
+      currency: {template: AUD, type: string}
+      size:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.size"}
+      unit_price_text:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.pricing.comparable"}

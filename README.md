@@ -110,12 +110,14 @@ a null key Field, is dropped (and counts toward `max_dropped_ratio`).
 Numeric conversion is strict: `3.50` works, but `$3.50` needs cleaning with an XPath
 expression or Pipe before conversion. A missing required Field drops the Record;
 an optional Field becomes `null` or its configured default. Inside a Loop use relative
-XPath (`.//...`); absolute XPath requires `absolute: true`.
+XPath (`.//...`); absolute XPath requires `absolute: true`. A typed Field that needs
+several steps lists them under `pipe:`, e.g. `{type: number, pipe: [{xpath: …}, {parse: json}, {jsonpath: …}]}`.
 
 Site `settings` override [`defaults.yaml`](defaults.yaml). Defaults include a one-second
 download delay, two concurrent requests per domain, obeying `robots.txt`, and recording
 all Captures. Write `record_level: "off"` with quotes because YAML interprets bare `off`
-as a boolean.
+as a boolean. `user_agent` replaces Scrapy's User-Agent for a Site whose bot protection
+challenges it (`coles_picks` sends a browser's).
 
 See the [full configuration example and semantics](docs/design.md#site-config--full-example)
 for nested Fields, Pipes, JSON APIs, sessions, and health thresholds. That example

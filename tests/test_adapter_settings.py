@@ -36,6 +36,12 @@ def test_site_settings_map_to_scrapy_settings() -> None:
     assert settings["ROBOTSTXT_OBEY"] is True
 
 
+def test_user_agent_overrides_scrapys_only_when_set() -> None:
+    assert "USER_AGENT" not in scrapy_settings(_site(), RUN)
+    settings = scrapy_settings(_site("{user_agent: Mozilla/5.0}"), RUN)
+    assert settings["USER_AGENT"] == "Mozilla/5.0"
+
+
 def test_a_site_can_opt_out_of_robots_txt() -> None:
     settings = scrapy_settings(_site("{obey_robots: false}"), RUN)
 

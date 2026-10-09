@@ -76,9 +76,30 @@ def test_site_settings_override_defaults() -> None:
 
 
 def test_non_allowlisted_setting_is_rejected() -> None:
-    errors = _errors(_site(settings={"user_agent": "bot"}))
+    errors = _errors(_site(settings={"proxy": "http://p.example"}))
 
-    assert errors == ["settings.user_agent: Extra inputs are not permitted"]
+    assert errors == ["settings.proxy: Extra inputs are not permitted"]
+
+
+def test_user_agent_is_optional() -> None:
+    assert parse_site(_site(), DEFAULTS).settings.user_agent is None
+    site = parse_site(_site(settings={"user_agent": "Mozilla/5.0"}), DEFAULTS)
+    assert site.settings.user_agent == "Mozilla/5.0"
+
+
+def test_a_typed_field_takes_a_multi_step_pipe() -> None:
+    pipe = [{"xpath": "//script/text()"}, {"parse": "json"}, {"jsonpath": "$.price"}]
+    site = parse_site(_product_field({"type": "number", "required": True, "pipe": pipe}), DEFAULTS)
+
+    field = site.page_types["product"].fields["f"]
+    assert (field.type, field.required) == ("number", True)
+    assert [step.kind for step in field.pipe] == ["xpath", "parse", "jsonpath"]
+
+
+def test_a_field_takes_pipe_or_inline_steps_not_both() -> None:
+    field = {"type": "string", "css": "h1::text", "pipe": [{"css": "h2::text"}]}
+
+    assert any("`pipe`" in error for error in _errors(_product_field(field)))
 
 
 def _product_field(field: Any) -> dict[str, Any]:

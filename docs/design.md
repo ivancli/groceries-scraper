@@ -135,6 +135,8 @@ page_types:
 | `fn: "module:callable"` | escape hatch, `(value, ctx) -> value` |
 
 A single step mapping is shorthand for a one-step Pipe. Trace records the value after every step.
+A Field with Field keys (`type`, `required`, …) and several steps names them under `pipe:`
+instead of inline; it cannot have both.
 
 ### Variables & templating
 - Scopes: `session.*` (Session Setup), `location.*` (the Run's Location), bare names (passed along the chain by `pass:`), `env.*` (environment; secrets never live in YAML).
@@ -296,6 +298,8 @@ runs/<site>/<run_id>/
 - Redacted by default: `Cookie`, `Set-Cookie`, `Authorization`, plus Site-configured headers.
 - `record_level: errors` keeps only non-2xx or extraction-error Captures.
   Use `record_level: "off"` with quotes: YAML treats an unquoted `off` as a boolean.
+- `settings.user_agent` replaces Scrapy's User-Agent for every request of the Site,
+  including browser-rendered pages, for retailers whose bot protection challenges it.
 - `settings.redact_headers` adds case-insensitive header names to redact in request/response
   metadata and Request Templates in the config snapshot. Values become `[REDACTED]`.
   Variables referenced by sensitive header templates are also redacted, as are Variable

@@ -35,7 +35,9 @@ RUNS_DIR = Path("runs")
 EXPORT_FAILED = 3  # beyond Run Health's 0 / 1 / 2
 ARCHIVE_FAILED = 4
 
-SINK_HELP = "Export the finished Run to postgres://… or s3://<bucket>[/<prefix>]; repeatable."
+# Help text is Rich markup, where an unescaped `[/…]` is a closing tag.
+S3_URL = r"s3://<bucket>\[/<prefix>]"
+SINK_HELP = f"Export the finished Run to postgres://… or {S3_URL}; repeatable."
 
 SinkOption = Annotated[list[str] | None, typer.Option("--sink", help=SINK_HELP)]
 
@@ -56,7 +58,7 @@ ArchiveOption = Annotated[
     str | None,
     typer.Option(
         "--archive",
-        help="Copy the whole Run directory to s3://<bucket>[/<prefix>], whatever its health.",
+        help=f"Copy the whole Run directory to {S3_URL}, whatever its health.",
     ),
 ]
 
@@ -480,7 +482,7 @@ def export(
     run_dir: Path,
     sink: Annotated[
         list[str],
-        typer.Option("--sink", help="postgres://… or s3://<bucket>[/<prefix>]; repeatable."),
+        typer.Option("--sink", help=f"postgres://… or {S3_URL}; repeatable."),
     ],
     force: Annotated[bool, typer.Option(help="Export even a failed Run.")] = False,
 ) -> None:

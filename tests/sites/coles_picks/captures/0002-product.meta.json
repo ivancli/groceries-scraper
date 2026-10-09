@@ -1,0 +1,76 @@
+{
+  "capture_no": 2,
+  "page_type": "product",
+  "parent_capture_no": null,
+  "variables": {
+    "session": {}
+  },
+  "request": {
+    "method": "GET",
+    "fingerprint": "scrapy-sha1-v1:94d35c03df3f34f44f7ad0a4863d43b6c1062718",
+    "url": "https://www.coles.com.au/product/coles-full-cream-milk-3l-8150288",
+    "headers": {
+      "Accept": [
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      ],
+      "Accept-Language": [
+        "en"
+      ],
+      "User-Agent": [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+      ],
+      "Accept-Encoding": [
+        "gzip, deflate, br, zstd"
+      ]
+    },
+    "body": "",
+    "body_encoding": "base64"
+  },
+  "response": {
+    "url": "https://www.coles.com.au/product/coles-full-cream-milk-3l-8150288",
+    "status": 200,
+    "headers": {
+      "Date": [
+        "Fri, 09 Oct 2026 12:41:00 GMT"
+      ],
+      "Content-Type": [
+        "text/html; charset=utf-8"
+      ],
+      "X-Telemetry-Traceid": [
+        "8b4a24a88030c42a35c1987dc08670ea"
+      ],
+      "Cache-Control": [
+        "private, no-cache, no-store, max-age=0, must-revalidate"
+      ],
+      "Etag": [
+        "\"asb125s9afdb2m\""
+      ],
+      "Vary": [
+        "Accept-Encoding"
+      ],
+      "Content-Encoding": [
+        "gzip"
+      ],
+      "Strict-Transport-Security": [
+        "max-age=31536000; includeSubDomains"
+      ],
+      "X-Cdn": [
+        "Imperva"
+      ],
+      "Content-Security-Policy": [
+        "default-src 'self' data: blob: *.coles.com.au *.grafana.net assets.hosted.topsort *.cookielaw.org *.onetrust.com *.adsrvr.org *.facebook.net www.youtube.com i.ytimg.com analytics.google.com www.google-analytics.com api.paydock.com *.everesttech.net www.google.com.sg static.enzymic.co *.mastercard.com edge.adobedc.net events.launchdarkly.com ahsapi.flybuys.com.au authentication.cardinalcommerce.com www.googletagmanager.com clientstream.launchdarkly.com edge.fullstory.com www.google.es *.braintreegateway.com *.paypal.com secure7.arcot.com colesonline.sjv.io/ *.demdex.net *.doubleclick.net *.apple.com www.google.com six.cdn-net.com assets.adobedtm.com app.launchdarkly.com *.bazaarvoice.com payments.braintree-api.com nebula-cdn.kampyle.com www.cdn-net.com region1.analytics.google.com *.googleapis.com mycardsecure.com www.google.co.in *.cloudinary.com www.google.co.nz adservice.google.com analytics-fe.digital-cloud-syd1.medallia.com.au *.googleadservices.com *.gstatic.com rs.fullstory.com *.sentry.io rum.hlx.page www.google.co.uk youtube.com www.rsa3dsauth.co.uk *.omtrdc.net *.cloudfront.net pre-au.flavedo.io coles.flavedo.io register.flybuys.com.au embed.salefinder.co.nz *.facebook.com integration.coles.citrusad.com www.google.com.au www.google.co.id widget.paydock.com prod.accdab.net *.twitter.com topsortassets.com coles.com.au integration.pre-au.citrusad.com api-sandbox.paydock.com payments.sandbox.braintree-api.com salefinder.com.au *.salefinder.com.au *.as1.gpayments.net acs-challenge.testlab.3dsecure.cloud widget-sandbox.paydock.com *.mention-me.com mention-me.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *.hcaptcha.com cdn.fraudlabspro.com *.onetrust.com *.cookielaw.org *.coles.com.au *.demdex.net *.everesttech.net www.google.com www.youtube.com *.googleapis.com *.googleadservices.com www.googletagmanager.com staticcdn.enzymic.co *.gstatic.com *.doubleclick.net *.bazaarvoice.com *.adsrvr.org nebula-cdn.kampyle.com *.omtrdc.net *.twitter.com edge.fullstory.com *.paypal.com embed.salefinder.com.au *.facebook.net assets.adobedtm.com *.mastercard.com www.cdn-net.com staging.cdn-net.com six.cdn-net.com prod.accdab.net test.accdab.net webservice.salefinder.com.au rum.hlx.page *.mention-me.com mention-me.com bugcrowd.com *.bugcrowdusercontent.com; style-src 'self' 'unsafe-inline' *.coles.com.au *.facebook.net static.enzymic.co *.mastercard.com www.googletagmanager.com *.braintreegateway.com *.paypal.com *.apple.com six.cdn-net.com assets.adobedtm.com *.bazaarvoice.com nebula-cdn.kampyle.com www.cdn-net.com *.googleapis.com *.gstatic.com *.cloudfront.net *.salefinder.com.au pre-au.flavedo.io coles.flavedo.io embed.salefinder.co.nz *.facebook.com integration.coles.citrusad.com widget.paydock.com prod.accdab.net *.twitter.com topsortassets.com coles.com.au; connect-src 'self' google.com *.airwallex.com *.hcaptcha.com *.cmltd.net.au *.ingest.us.sentry.io *.coles.com.au coles.com.au *.grafana.net *.mypurecloud.com.au wss://webmessaging.mypurecloud.com.au static.enzymic.co *.cookielaw.org *.onetrust.com *.adsrvr.org analytics.google.com www.google-analytics.com region1.google-analytics.com region1.analytics.google.com api.paydock.com widget.paydock.com api-sandbox.paydock.com widget-sandbox.paydock.com *.as1.gpayments.net *.everesttech.net *.mastercard.com edge.adobedc.net events.launchdarkly.com clientstream.launchdarkly.com app.launchdarkly.com ahsapi.flybuys.com.au register.flybuys.com.au authentication.cardinalcommerce.com www.googletagmanager.com edge.fullstory.com rs.fullstory.com *.braintreegateway.com *.paypal.com payments.braintree-api.com payments.sandbox.braintree-api.com *.demdex.net *.doubleclick.net adservice.google.com *.googleadservices.com *.googleapis.com *.apple.com *.bazaarvoice.com nebula-cdn.kampyle.com mycardsecure.com www.rsa3dsauth.co.uk *.securesuite.co.uk *.omtrdc.net *.cloudfront.net *.sentry.io rum.hlx.page analytics-fe.digital-cloud-syd1.medallia.com.au pre-au.flavedo.io coles.flavedo.io integration.coles.citrusad.com integration.pre-au.citrusad.com *.facebook.net *.facebook.com *.twitter.com colesonline.sjv.io prod.accdab.net test.accdab.net *.mention-me.com mention-me.com www.google.com www.google.com.au www.google.com.sg www.google.co.in www.google.co.nz www.google.co.uk www.google.co.id www.google.es; frame-src 'self' *.hcaptcha.com api-sandbox.paydock.com api.paydock.com *.as1.gpayments.net *.googletagmanager.com *.coles.com.au *.arcot.com *.mycardplace.com authentication-acs.marqeta.com *.americanexpress.com acs-challenge.apata.io 3ds.emlpayments.com ims.euronet3dsecure.com uobs3dsg2.uobgroup.com *.wibmo.com securehdfc-acs2ui-b1-indmum-mumsif.hdfc.bank.in channel-cards-html.lloydsbankinggroup.com *.hyundaicard.com *.3debspay.boc.cn 3dsecure.starlingbank.com acs-challenge.testlab.3dsecure.cloud authentication.cardinalcommerce.com mycardsecure.com www.rsa3dsauth.co.uk *.securesuite.co.uk *.paypal.com *.braintreegateway.com widget.paydock.com widget-sandbox.paydock.com www.youtube.com youtube.com *.bazaarvoice.com nebula-cdn.kampyle.com embed.salefinder.co.nz *.salefinder.com.au salefinder.com.au integration.coles.citrusad.com integration.pre-au.citrusad.com pre-au.flavedo.io coles.flavedo.io register.flybuys.com.au *.twitter.com colessupermarkets.formstack.com *.facebook.com *.apple.com www.google.com *.adsrvr.org *.demdex.net *.mastercard.com *.doubleclick.net *.mention-me.com mention-me.com acs.revolut.com acs.stripeauthentications.com *.airwallex.com *.apac.citibank.com prod.respondselfserve.com bugcrowd.com edm.colesfinancialservices.com.au; frame-ancestors 'self' *.coles.com.au *.instagram.com instagram.com *.punchoutcommerce.com punchoutcommerce.com *.t1cloud.com t1cloud.com *.technologyonecorp.com technologyonecorp.com *.coupa.com coupa.com *.unimarket.com unimarket.com *.epicor.com epicor.com *.precisebusiness.com precisebusiness.com *.ondemand.com ondemand.com *.s4hana.cloud.sap *.citrusad.com citrusad.com *.topsort.com *.topsort.ai *.mention-me.com mention-me.com; font-src 'self' data: blob: https:; img-src 'self' data: blob: https:; report-uri https://o1058658.ingest.us.sentry.io/api/4510865571446784/security/?sentry_key=00e39302edde30b086c460085fa72867;"
+      ],
+      "X-Content-Type-Options": [
+        "nosniff"
+      ],
+      "X-Iinfo": [
+        "11-16374326-16371932 SNNy RT(1791549657171 2678) q(0 0 0 -1) r(2 2) U5"
+      ]
+    },
+    "timing": {
+      "started_at": "2026-10-09T12:41:30.212791+00:00",
+      "finished_at": "2026-10-09T12:41:30.212959+00:00",
+      "elapsed_seconds": 0.00016638904344290495
+    }
+  }
+}
