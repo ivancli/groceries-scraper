@@ -39,6 +39,8 @@ def scrapy_settings(
     }
     if limit is not None:
         settings["CLOSESPIDER_ITEMCOUNT"] = limit
+    if site.settings.user_agent is not None:
+        settings["USER_AGENT"] = site.settings.user_agent
     # Replay serves rendered Captures, so it never needs a browser.
     if replay is None and any(page.renders_in_browser for page in site.page_types.values()):
         # Requests without the browser meta key still go through Scrapy's HTTP handler.

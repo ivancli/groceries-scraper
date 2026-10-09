@@ -156,14 +156,18 @@ class FieldSpec(_Model):
     @model_validator(mode="before")
     @classmethod
     def _inline_pipe(cls, data: Any) -> Any:
-        # Pipe keys sit inline with Field keys (`{css: ..., type: string}`), or the
-        # whole Field is a Pipe list.
+        # Pipe keys sit inline with Field keys (`{css: ..., type: string}`), the whole
+        # Field is a Pipe list, or a typed Field needing several steps names them in `pipe`.
         if isinstance(data, list):
             return {PIPE_KEY: data}
         if not isinstance(data, dict) or PIPE_KEY in data:
             return data
         own = {k: v for k, v in data.items() if k in FIELD_KEYS}
-        step = {k: v for k, v in data.items() if k not in FIELD_KEYS}
+        step = {k: v for k, v in data.items() if k not in FIELD_KEYS | {"pipe"}}
+        if "pipe" in data:
+            if step:
+                raise _config_error("a Field takes `pipe` or inline Pipe steps, not both")
+            return {**own, PIPE_KEY: data["pipe"]}
         return {**own, PIPE_KEY: step} if step else own
 
     @model_validator(mode="after")
@@ -279,6 +283,8 @@ class Settings(_Model):
     obey_robots: bool
     record_level: RecordLevel
     redact_headers: list[str] = Field(default_factory=list)
+    # For Sites whose bot protection challenges Scrapy's own User-Agent.
+    user_agent: str | None = None
 
 
 class SetupStep(_Model):

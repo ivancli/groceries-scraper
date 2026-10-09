@@ -26,6 +26,14 @@ def test_help_lists_the_commands() -> None:
         assert command in result.output
 
 
+@pytest.mark.parametrize("command", ["run", "replay", "export"])
+def test_command_help_renders_sink_placeholders(command: str) -> None:
+    result = CliRunner().invoke(app, [command, "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "s3://<bucket>[/<prefix>]" in result.output
+
+
 def _validate(tmp_path: Path, config: str) -> Result:
     site_file = tmp_path / "site.yaml"
     site_file.write_text(config)
