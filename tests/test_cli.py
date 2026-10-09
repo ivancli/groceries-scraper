@@ -31,7 +31,8 @@ def test_command_help_renders_sink_placeholders(command: str) -> None:
     result = CliRunner().invoke(app, [command, "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "s3://<bucket>[/<prefix>]" in result.output
+    # Typer forces colour under GITHUB_ACTIONS, splitting the text with ANSI styles.
+    assert "s3://<bucket>[/<prefix>]" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
 
 
 def _validate(tmp_path: Path, config: str) -> Result:
