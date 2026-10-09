@@ -1,8 +1,14 @@
-# Only the Chemist Warehouse products listed under `start`, read from their product pages.
+# Chemist Warehouse products listed under `start` or supplied by the Dispatcher, read from their product pages.
 site: chemist_warehouse_picks
 settings:
   download_delay: 1.0
   record_level: all
+schedule: {every: 30m}
+accepts:
+  page_type: product
+  url: '^https://www\.chemistwarehouse\.com\.au/buy/\d+/'
+  examples:
+    - https://www.chemistwarehouse.com.au/buy/102414/aptagrow-nutrient-dense-milk-drink-from-3-years-900g
 records:
   product: {key: [url]}
 health:
@@ -10,26 +16,40 @@ health:
   max_dropped_ratio: 0
   max_http_error_ratio: 0
 start:
-  - url: https://www.chemistwarehouse.com.au/buy/118851/man-tan-aminotan-mousse-200ml
+  - url: https://www.chemistwarehouse.com.au/buy/102414/aptagrow-nutrient-dense-milk-drink-from-3-years-900g
     page_type: product
   - url: https://www.chemistwarehouse.com.au/buy/145680/panadol-500mg-16-mini-caplets
     page_type: product
 page_types:
   product:
     record: product
+    # The page's Next.js JSON holds everything but the URL and name; its styling classes are unstable.
+    # Its `rrp` is left out of `regular_price`: CW prices nearly everything below RRP, so it isn't a special.
     fields:
       url: {xpath: "//link[@rel='canonical']/@href", type: string, required: true}
       name: {css: "h1::text", type: string, required: true}
-      # Brand and price come from the page's Next.js JSON; its styling classes are unstable.
       brand:
-        - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
-        - {parse: json}
-        - {jsonpath: "$.props.pageProps.product.product.variants[0].brand.label"}
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.product.variants[0].brand.label"}
       price:
-        - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
-        - {parse: json}
-        - {jsonpath: "$.props.pageProps.product.prices[0].price.value.amount"}
+        type: number
+        required: true
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.prices[0].price.value.amount"}
       currency:
-        - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
-        - {parse: json}
-        - {jsonpath: "$.props.pageProps.product.prices[0].price.value.currencyCode"}
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.prices[0].price.value.currencyCode"}
+      availability:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.props.pageProps.product.availability[0].status"}
