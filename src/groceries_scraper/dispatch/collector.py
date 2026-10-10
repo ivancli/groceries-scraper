@@ -114,6 +114,8 @@ class CollectorClient:
             sites.append(
                 {
                     "site": site.site,
+                    "retailer": site.accepts.retailer.key,
+                    "retailer_name": site.accepts.retailer.name,
                     "accepts": site.accepts.url,
                     "locations": locations,
                     "store_specific": bool(site.locations),

@@ -8,6 +8,7 @@ settings:
 schedule: {every: 30m}
 accepts:
   page_type: product
+  retailer: {key: coles, name: Coles}
   url: '^https://www\.coles\.com\.au/product/'
   examples:
     - https://www.coles.com.au/product/cocobella-protein-coconut-yoghurt-pouch-vanilla-160g-1157085

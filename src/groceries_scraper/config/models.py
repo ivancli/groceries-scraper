@@ -407,10 +407,35 @@ def _outside_shared_subset(pattern: str) -> str | None:
     return None
 
 
+_RETAILER_KEY = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def _retailer_key(key: str) -> str:
+    if not _RETAILER_KEY.fullmatch(key):
+        raise _config_error(
+            f"`{key}` must be lowercase letters, digits and `_`, starting with a letter"
+        )
+    return key
+
+
+def _not_blank(value: str) -> str:
+    if not value.strip():
+        raise _config_error("must not be blank")
+    return value
+
+
+class RetailerRef(_Model):
+    """The retailer an Accepts Rule's links belong to; the tracker keeps Home Stores per `key`."""
+
+    key: Annotated[str, AfterValidator(_retailer_key)]
+    name: Annotated[str, AfterValidator(_not_blank)]
+
+
 class AcceptsRule(_Model):
     """Which URLs the Site takes as Supplied Start Requests, and the Page Type they start at."""
 
     page_type: str
+    retailer: RetailerRef
     url: Annotated[str, AfterValidator(_shared_regex)]
     examples: Annotated[list[str], Field(min_length=1)]
 

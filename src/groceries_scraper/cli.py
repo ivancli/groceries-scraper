@@ -210,7 +210,7 @@ def validate(site_config: Path) -> None:
         sites[str(path)] = site
         typer.echo(f"{path} is valid")
     if errors := check_sites(sites):
-        typer.echo("\n".join(["Sites accept the same URL:", *errors]), err=True)
+        typer.echo("\n".join(["Sites conflict with one another:", *errors]), err=True)
     if failed or errors:
         raise typer.Exit(code=1)
 

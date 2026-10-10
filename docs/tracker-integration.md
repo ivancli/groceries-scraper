@@ -30,6 +30,7 @@ site: aldi_picks
 schedule: {every: 30m}            # optional `enabled: false` pauses the Site (the kill switch)
 accepts:
   page_type: product
+  retailer: {key: aldi, name: ALDI}  # the tracker keeps Home Stores per `key`
   url: '^https://www\.aldi\.com\.au/product/'
 locations:                        # optional; `label` is shown in the tracker's Home Store picker
   sydney_g412: {label: "Sydney G412", service_point: G412}
@@ -39,8 +40,9 @@ Validation (`scrape validate`):
 - A Site with `accepts` must have `schedule`, and vice versa.
 - The accepted Page Type has no Follow Rules.
 - The pattern compiles in the shared Python/JavaScript subset: anchored, no look-behind, no named groups.
+- `retailer.key` matches `^[a-z][a-z0-9_]*$` and `retailer.name` is not blank; both are required.
 - `every` is at least `defaults.yaml` `schedule.min_every` (15m).
-- `scrape validate sites/` also rejects two Sites whose patterns claim the same URL. This is checked against example URLs listed with each Site (`accepts.examples`), because regex overlap can't be decided in general.
+- `scrape validate sites/` also rejects two Sites whose patterns claim the same URL. This is checked against example URLs listed with each Site (`accepts.examples`), because regex overlap can't be decided in general. It also rejects two accepting Sites with the same `retailer.key`, because a Home Store's Locations come from one Site.
 
 **Price Record contract.** An accepting Site's Record Type must declare these Fields:
 - required: `url`, `name`, `price` (number, dollars)
@@ -134,7 +136,8 @@ details are never included in logs, and HTTP redirects are refused.
 - `refresh_watch_list()` atomically replaces the cached entries and ETag after a
   valid response. HTTP 304 changes nothing. `store.watch_list()` reads the cache.
 - `publish_site_catalogue(Path("sites"))` publishes only Sites with Accepts Rules
-  and Schedules, including disabled Sites. Location Variables stay local; only
+  and Schedules, including disabled Sites, each with its `retailer` key and
+  `retailer_name`. Location Variables stay local; only
   names and labels are sent. Missing labels fall back to the Location name, and
   a Site without Locations publishes `default` with `store_specific: false`.
   The hash covers only the public catalogue and is saved after a successful PUT.

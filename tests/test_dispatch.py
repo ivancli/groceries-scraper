@@ -31,7 +31,12 @@ SHOP = "https://shop.example/p/"
 SHOP_SITE: dict[str, Any] = {
     "site": "shop",
     "schedule": {"every": "1h"},
-    "accepts": {"page_type": "product", "url": "^https://shop\\.example/p/", "examples": [SHOP]},
+    "accepts": {
+        "page_type": "product",
+        "retailer": {"key": "shop", "name": "Shop"},
+        "url": "^https://shop\\.example/p/",
+        "examples": [SHOP],
+    },
     "locations": {"north": {"label": "North"}, "south": {}},
     "records": {"product": {"key": ["url"]}},
     "start": [{"url": "https://shop.example/", "page_type": "product"}],
@@ -285,7 +290,11 @@ def test_unroutable_entries_are_reported_once_and_disabled_sites_skipped(
     cluster: FakeCluster,
 ) -> None:
     paused = {**SHOP_SITE, "site": "paused", "schedule": {"every": "1h", "enabled": False}}
-    paused["accepts"] = {**SHOP_SITE["accepts"], "url": "^https://paused\\.example/"}
+    paused["accepts"] = {
+        **SHOP_SITE["accepts"],
+        "retailer": {"key": "paused", "name": "Paused"},
+        "url": "^https://paused\\.example/",
+    }
     paused["accepts"]["examples"] = ["https://paused.example/"]
     (sites / "paused.yaml").write_text(yaml.safe_dump(paused))
     tracker.watch_list = [

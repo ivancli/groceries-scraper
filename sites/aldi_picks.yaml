@@ -6,6 +6,7 @@ settings:
 schedule: {every: 30m}
 accepts:
   page_type: product
+  retailer: {key: aldi, name: ALDI}
   url: '^https://www\.aldi\.com\.au/product/'
   examples:
     - https://www.aldi.com.au/product/aldi-natural-walnuts-500g-000000000000282420

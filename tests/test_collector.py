@@ -235,6 +235,10 @@ def test_catalogue_contains_accepting_sites_and_is_only_sent_when_public_data_ch
     store_site = {
         **site,
         "site": "stores",
+        "accepts": {
+            **site["accepts"],
+            "retailer": {"key": "aldi_stores", "name": "ALDI Stores"},
+        },
         "schedule": {"every": "1h", "enabled": False},
         "locations": {"sydney": {"label": "Sydney G412", "service_point": "G412"}},
     }
@@ -246,6 +250,8 @@ def test_catalogue_contains_accepting_sites_and_is_only_sent_when_public_data_ch
         "sites": [
             {
                 "site": "aldi_picks",
+                "retailer": "aldi",
+                "retailer_name": "ALDI",
                 "accepts": r"^https://www\.aldi\.com\.au/product/",
                 "locations": [{"name": "default", "label": "default"}],
                 "store_specific": False,
@@ -254,6 +260,8 @@ def test_catalogue_contains_accepting_sites_and_is_only_sent_when_public_data_ch
             },
             {
                 "site": "stores",
+                "retailer": "aldi_stores",
+                "retailer_name": "ALDI Stores",
                 "accepts": r"^https://www\.aldi\.com\.au/product/",
                 "locations": [{"name": "sydney", "label": "Sydney G412"}],
                 "store_specific": True,

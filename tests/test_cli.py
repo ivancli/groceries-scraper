@@ -95,7 +95,11 @@ def test_validate_passes_every_site_in_the_repo() -> None:
 ACCEPTING_SITE = """
 site: {name}
 schedule: {{every: 30m}}
-accepts: {{page_type: product, url: '{pattern}', examples: ['{example}']}}
+accepts:
+  page_type: product
+  retailer: {{key: {name}, name: {name}}}
+  url: '{pattern}'
+  examples: ['{example}']
 records: {{product: {{}}}}
 start: [{{url: '{example}', page_type: product}}]
 page_types:
