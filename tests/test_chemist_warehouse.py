@@ -1,6 +1,8 @@
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from groceries_scraper.config import load_checked_site
 from groceries_scraper.engine.page import evaluate_response
 from groceries_scraper.engine.pipe import PipeContext
@@ -19,9 +21,8 @@ def test_chemist_warehouse_picks_accepts_product_urls_every_30_minutes() -> None
     assert not site.accepts.matches("https://www.chemistwarehouse.com.au/shop-online/258/medicines")
 
 
-def test_chemist_warehouse_product_reads_price_from_next_data() -> None:
-    site, _ = load_checked_site(SITE)
-    body = f"""
+def _product_page(status: str) -> bytes:
+    return f"""
     <link rel="canonical" href="{URL}">
     <h1>AptaGrow Nutrient-Dense Milk Drink From 3+ Years 900g</h1>
     <script id="__NEXT_DATA__" type="application/json">
@@ -31,12 +32,18 @@ def test_chemist_warehouse_product_reads_price_from_next_data() -> None:
           "value": {{"amount": 39.99, "currencyCode": "AUD"}},
           "rrp": {{"amount": 45.99, "currencyCode": "AUD"}}
         }}}}],
-        "availability": [{{"sku": "2694907", "status": "in-stock"}}]
+        "availability": [{{"sku": "2694907", "status": "{status}"}}]
       }}}}}}}}
     </script>
     """.encode()
 
-    result = evaluate_response(site.page_types["product"], body, "text/html", PipeContext(url=URL))
+
+def test_chemist_warehouse_product_reads_price_from_next_data() -> None:
+    site, _ = load_checked_site(SITE)
+
+    result = evaluate_response(
+        site.page_types["product"], _product_page("in-stock"), "text/html", PipeContext(url=URL)
+    )
 
     assert result.extraction.dropped == []
     assert result.extraction.records[0].data == {
@@ -45,5 +52,22 @@ def test_chemist_warehouse_product_reads_price_from_next_data() -> None:
         "brand": "Aptamil",
         "price": 39.99,
         "currency": "AUD",
-        "availability": "in-stock",
+        "availability": "in_stock",
     }
+
+
+# The tracker 400s a whole delivery over one availability it doesn't know, so others are left out.
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("in-stock", "in_stock"), ("out-of-stock", "out_of_stock"), ("pre-order", None)],
+)
+def test_chemist_warehouse_product_sends_only_availability_the_tracker_accepts(
+    status: str, expected: str | None
+) -> None:
+    site, _ = load_checked_site(SITE)
+
+    result = evaluate_response(
+        site.page_types["product"], _product_page(status), "text/html", PipeContext(url=URL)
+    )
+
+    assert result.extraction.records[0].data.get("availability") == expected
