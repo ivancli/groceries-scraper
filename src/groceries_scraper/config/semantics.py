@@ -130,7 +130,7 @@ def check_sites(sites: Mapping[str, Site]) -> list[str]:
     # A Home Store's Locations come from one Site, so the tracker refuses a shared key.
     retailers: dict[str, tuple[str, str]] = {}
     for source, name, accepts in accepting:
-        other, other_source = retailers.setdefault(accepts.retailer.key, (name, source))
+        other_source, other = retailers.setdefault(accepts.retailer.key, (source, name))
         if other_source != source:
             errors.append(
                 f"{source}: accepts.retailer: `{accepts.retailer.key}` is also the retailer "
