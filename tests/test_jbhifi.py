@@ -17,7 +17,7 @@ def test_jbhifi_picks_accepts_product_urls_every_30_minutes() -> None:
 
     assert site.schedule is not None and site.schedule.every == timedelta(minutes=30)
     assert site.accepts is not None
-    assert site.accepts.retailer.key == "jbhifi"
+    assert (site.accepts.retailer.key, site.accepts.retailer.name) == ("jbhifi", "JB Hi-Fi")
     assert site.accepts.matches(URL)
     assert not site.accepts.matches(
         "https://www.jbhifi.com.au/collections/headphones-speakers-audio"
