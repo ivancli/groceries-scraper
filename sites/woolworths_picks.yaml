@@ -1,0 +1,71 @@
+# Woolworths products listed under `start` or supplied by the Dispatcher, read from their product pages.
+site: woolworths_picks
+settings:
+  download_delay: 1.0
+  record_level: all
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+schedule: {every: 30m}
+accepts:
+  page_type: product
+  retailer: {key: woolworths, name: Woolworths}
+  url: '^https://www\.woolworths\.com\.au/shop/productdetails/\d+/[^/?#]+'
+  examples:
+    - https://www.woolworths.com.au/shop/productdetails/151299/dettol-antibacterial-disinfectant-liquid-solution
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.woolworths.com.au/shop/productdetails/151299/dettol-antibacterial-disinfectant-liquid-solution
+    page_type: product
+page_types:
+  product:
+    record: product
+    # Product JSON-LD is available without browser rendering.
+    # Its ListPrice is a unit price, not a previous shelf price.
+    fields:
+      url: {xpath: "//link[@rel='canonical']/@href", type: string, required: true}
+      name:
+        type: string
+        required: true
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.name"}
+      brand:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.brand.name"}
+      price:
+        type: number
+        required: true
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.price"}
+      currency:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.priceCurrency"}
+      # The tracker rejects a whole delivery over one unknown status, so others are left out.
+      availability:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.availability"}
+          - {regex: '^https?://schema\.org/(InStock|OutOfStock)$'}
+          - {replace: [InStock, in_stock]}
+          - {replace: [OutOfStock, out_of_stock]}
+      size:
+        type: string
+        pipe:
+          - {xpath: "//script[@id='pdp-schema' and @type='application/ld+json']/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.priceSpecification.unitText"}
