@@ -1569,6 +1569,7 @@ records: {product: {key: [sku]}}
 schedule: {every: 30m}
 accepts:
   page_type: product
+  retailer: {key: e2e, name: E2E}
   url: '^$pattern/p/'
   examples: ["$base/p/example"]
 start: [{url: "$base/c/dairy", page_type: listing}]

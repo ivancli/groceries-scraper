@@ -623,8 +623,10 @@ PRICE_FIELDS: dict[str, Any] = {
     "name": {"css": "h1::text", "type": "string", "required": True},
     "price": {"css": ".price::text", "type": "number", "required": True},
 }
+RETAILER: dict[str, Any] = {"key": "shop", "name": "Shop"}
 ACCEPTS: dict[str, Any] = {
     "page_type": "product",
+    "retailer": RETAILER,
     "url": "^https://x\\.example/p/",
     "examples": [PRODUCT_URL],
 }
@@ -636,10 +638,11 @@ def _accepting(
     examples: list[str] | None = None,
     fields: dict[str, Any] = PRICE_FIELDS,
     schedule: dict[str, Any] | None = None,
+    retailer: Any = RETAILER,
     **page: Any,
 ) -> list[str]:
     page_types = {"listing": {}, "product": {"record": "product", "fields": fields, **page}}
-    accepts = {**ACCEPTS, "url": url, "examples": examples or [PRODUCT_URL]}
+    accepts = {**ACCEPTS, "url": url, "examples": examples or [PRODUCT_URL], "retailer": retailer}
     try:
         return _errors(page_types, accepts=accepts, schedule=schedule or {"every": "30m"})
     except ConfigError as exc:  # the pattern itself is checked by the schema
@@ -716,6 +719,31 @@ def test_accepts_classes_match_ascii_only_as_in_javascript() -> None:
 
     assert errors == [
         "accepts.examples[1]: `https://x.example/p/\u0661` does not match `accepts.url`"
+    ]
+
+
+def test_an_accepts_rule_must_name_its_retailer() -> None:
+    accepts = {key: value for key, value in ACCEPTS.items() if key != "retailer"}
+    page_types = {"product": {"record": "product", "fields": PRICE_FIELDS}}
+
+    with pytest.raises(ConfigError) as exc:
+        _errors(page_types, accepts=accepts, schedule={"every": "30m"})
+
+    assert exc.value.errors == ["accepts.retailer: Field required"]
+
+
+@pytest.mark.parametrize("key", ["Chemist-Warehouse", "chemist-warehouse", "1shop", "_shop", ""])
+def test_a_retailer_key_is_lowercase_letters_digits_and_underscores(key: str) -> None:
+    assert _accepting(retailer={"key": key, "name": "Shop"}) == [
+        f"accepts.retailer.key: `{key}` must be lowercase letters, digits and `_`, "
+        "starting with a letter"
+    ]
+
+
+@pytest.mark.parametrize("name", ["", "  "])
+def test_a_retailer_needs_a_name(name: str) -> None:
+    assert _accepting(retailer={"key": "shop", "name": name}) == [
+        "accepts.retailer.name: must not be blank"
     ]
 
 
@@ -854,13 +882,18 @@ def test_a_location_label_is_display_text() -> None:
 # --- Sites claiming one another's URLs ---------------------------------------------
 
 
-def _accepting_site(name: str, url: str, *examples: str) -> Site:
+def _accepting_site(name: str, url: str, *examples: str, retailer: str | None = None) -> Site:
     data = {
         "site": name,
         "start": [{"url": examples[0], "page_type": "product"}],
         "records": {"product": {}},
         "schedule": {"every": "30m"},
-        "accepts": {"page_type": "product", "url": url, "examples": list(examples)},
+        "accepts": {
+            "page_type": "product",
+            "retailer": {"key": retailer or name, "name": name.upper()},
+            "url": url,
+            "examples": list(examples),
+        },
         "page_types": {"product": {"record": "product", "fields": PRICE_FIELDS}},
     }
     return parse_site(data, DEFAULTS)
@@ -878,6 +911,22 @@ def test_sites_must_not_accept_one_anothers_examples() -> None:
         "is also accepted by Site `b` (b.yaml)",
         "b.yaml: accepts.examples[0]: `https://x.example/p/2` "
         "is also accepted by Site `a` (a.yaml)",
+    ]
+
+
+def test_two_accepting_sites_must_not_share_a_retailer() -> None:
+    sites = {
+        "a.yaml": _accepting_site(
+            "a", "^https://a\\.example/", "https://a.example/1", retailer="shop"
+        ),
+        "b.yaml": _accepting_site(
+            "b", "^https://b\\.example/", "https://b.example/1", retailer="shop"
+        ),
+        "c.yaml": _accepting_site("c", "^https://c\\.example/", "https://c.example/1"),
+    }
+
+    assert check_sites(sites) == [
+        "b.yaml: accepts.retailer: `shop` is also the retailer of Site `a` (a.yaml)"
     ]
 
 

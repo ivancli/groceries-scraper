@@ -119,7 +119,7 @@ def check_sites(sites: Mapping[str, Site]) -> list[str]:
     accepting = [
         (source, site.site, site.accepts) for source, site in sites.items() if site.accepts
     ]
-    return [
+    errors = [
         f"{source}: accepts.examples[{i}]: `{url}` is also accepted by Site `{other}` "
         f"({other_source})"
         for source, _, accepts in accepting
@@ -127,6 +127,16 @@ def check_sites(sites: Mapping[str, Site]) -> list[str]:
         for other_source, other, other_accepts in accepting
         if other_source != source and other_accepts.matches(url)
     ]
+    # A Home Store's Locations come from one Site, so the tracker refuses a shared key.
+    retailers: dict[str, tuple[str, str]] = {}
+    for source, name, accepts in accepting:
+        other, other_source = retailers.setdefault(accepts.retailer.key, (name, source))
+        if other_source != source:
+            errors.append(
+                f"{source}: accepts.retailer: `{accepts.retailer.key}` is also the retailer "
+                f"of Site `{other}` ({other_source})"
+            )
+    return errors
 
 
 def _start_page_types(site: Site) -> list[tuple[str, str]]:

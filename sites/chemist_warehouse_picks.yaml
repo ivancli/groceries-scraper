@@ -6,6 +6,7 @@ settings:
 schedule: {every: 30m}
 accepts:
   page_type: product
+  retailer: {key: chemist_warehouse, name: Chemist Warehouse}
   url: '^https://www\.chemistwarehouse\.com\.au/buy/\d+/'
   examples:
     - https://www.chemistwarehouse.com.au/buy/102414/aptagrow-nutrient-dense-milk-drink-from-3-years-900g

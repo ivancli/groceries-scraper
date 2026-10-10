@@ -138,7 +138,7 @@ A **Start Request** handed to a **Run** from outside the **Site** configuration 
 _Avoid_: Target, seed, external URL
 
 **Accepts Rule**:
-A **Site**'s declaration of which URLs it can take as **Supplied Start Requests** (a URL pattern) and which **Page Type** handles them.
+A **Site**'s declaration of which URLs it can take as **Supplied Start Requests** (a URL pattern), which **Page Type** handles them, and the retailer whose links they are.
 _Avoid_: Targets, route, matcher
 
 **Start Request Outcome**:
@@ -162,7 +162,7 @@ The tracker's list of product URLs and **Locations** to keep checking; it says w
 _Avoid_: Due list, targets, queue
 
 **Site Catalogue**:
-What the **Dispatcher** tells the tracker it can check: each **Site**'s **Accepts Rule**, **Locations** and **Schedule**.
+What the **Dispatcher** tells the tracker it can check: each **Site**'s **Accepts Rule** (with its retailer), **Locations** and **Schedule**.
 _Avoid_: Capabilities, manifest
 
 **Price Observation**:
@@ -210,6 +210,7 @@ _Avoid_: Status, Run Health
 - A **Run** is exported to zero or more **Sinks** after it finishes; a **Run** with **Supplied Start Requests** is exported whatever its **Run Health**, other `failed` **Runs** only when forced, and re-exporting replaces the **Sink**'s earlier copy
 - A **Run** has at most one **Archive**, made after it finishes whatever its **Run Health**
 - A **Site** has at most one **Accepts Rule**; a URL matching two **Sites**' rules is a configuration error
+- An **Accepts Rule** names one retailer, and no two **Sites** name the same one, because a Home Store's **Locations** come from one **Site**
 - A **Run** given **Supplied Start Requests** ignores the **Site**'s `start:` list and reports exactly one **Start Request Outcome** per **Supplied Start Request**
 - A **Site** with an **Accepts Rule** has a **Schedule**; the **Dispatcher** decides when each **Watch List** entry is due from its last **Price Observation**
 - Each due (**Site**, **Location**) pair becomes one **Run**
