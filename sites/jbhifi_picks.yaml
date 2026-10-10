@@ -1,0 +1,66 @@
+# JB Hi-Fi products listed under `start` or supplied by the Dispatcher, read from their product pages.
+site: jbhifi_picks
+settings:
+  download_delay: 1.0
+  record_level: all
+schedule: {every: 30m}
+accepts:
+  page_type: product
+  retailer: {key: jbhifi, name: JB Hi-Fi}
+  url: '^https://www\.jbhifi\.com\.au/products/[^/?#]+'
+  examples:
+    - https://www.jbhifi.com.au/products/apple-airpods-4
+records:
+  product: {key: [url]}
+health:
+  min_records: {product: 1}
+  max_dropped_ratio: 0
+  max_http_error_ratio: 0
+start:
+  - url: https://www.jbhifi.com.au/products/apple-airpods-4
+    page_type: product
+  - url: https://www.jbhifi.com.au/products/dyson-camerajet-electric-toothbrush-with-flosser-and-starter-kit-ultra-blue
+    page_type: product
+page_types:
+  product:
+    record: product
+    # Every field but the URL comes from the schema.org Product JSON-LD, not the BreadcrumbList beside it.
+    # Its ListPrice equals the shelf price, so there is no `regular_price`.
+    fields:
+      url: {xpath: "//link[@rel='canonical']/@href", type: string, required: true}
+      name:
+        type: string
+        required: true
+        pipe:
+          - {xpath: "//script[@type='application/ld+json'][contains(., '\"Product\"')]/text()"}
+          - {parse: json}
+          - {jsonpath: "$.name"}
+      brand:
+        type: string
+        pipe:
+          - {xpath: "//script[@type='application/ld+json'][contains(., '\"Product\"')]/text()"}
+          - {parse: json}
+          - {jsonpath: "$.brand.name"}
+      price:
+        type: number
+        required: true
+        pipe:
+          - {xpath: "//script[@type='application/ld+json'][contains(., '\"Product\"')]/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.price"}
+      currency:
+        type: string
+        pipe:
+          - {xpath: "//script[@type='application/ld+json'][contains(., '\"Product\"')]/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.priceCurrency"}
+      # The tracker rejects a whole delivery over one unknown status, so others are left out.
+      availability:
+        type: string
+        pipe:
+          - {xpath: "//script[@type='application/ld+json'][contains(., '\"Product\"')]/text()"}
+          - {parse: json}
+          - {jsonpath: "$.offers.availability"}
+          - {regex: '^https?://schema\.org/(InStock|OutOfStock)$'}
+          - {replace: [InStock, in_stock]}
+          - {replace: [OutOfStock, out_of_stock]}
