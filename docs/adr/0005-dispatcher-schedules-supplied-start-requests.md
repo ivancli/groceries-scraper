@@ -7,7 +7,7 @@ The tracker can no longer tell what is due, because it only hears about changes 
 ## Decisions within this
 
 - **Schedule lives in the Site YAML** (`schedule: {every: 30m}`), with a global minimum in `defaults.yaml`. This reverses the provisional note on #44 that schedules stay out of Site YAML. Frequency is a per-retailer politeness setting like `download_delay`, not a cluster concern.
-- **Routing is by URL, not retailer name.** A Site's **Accepts Rule** (`accepts: {page_type, url}`) claims URLs, and a URL claimed by two Sites fails validation. The scraper never learns the tracker's retailer names.
+- **Routing is by URL, not retailer name.** A Site's **Accepts Rule** (`accepts: {page_type, url}`) claims URLs, and a URL claimed by two Sites fails validation. The scraper never learns the tracker's retailer names. _Amended by #78: each Accepts Rule now names its retailer, which the Site Catalogue sends to the tracker; routing is still by URL._
 - **Supplied Start Requests replace `start:`.** Every one of them gets a **Start Request Outcome**, because missing Records cannot tell "not found" from "robots-denied" or "crashed". An Accepts Rule's Page Type must not follow links, so a supplied URL never turns into a crawl.
 - **Home Stores reference named Locations** declared in the Site. Store selection details never leave the Site, and ADR-0002's named, stable Location per Run holds.
 - **The Dispatcher is the only tracker-aware code.** It lives in `groceries_scraper/dispatch/`, ships in the same image, and speaks the tracker's Collector API. The engine, Sites and Sinks stay generic.
