@@ -47,9 +47,12 @@ page_types:
           - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
           - {parse: json}
           - {jsonpath: "$.props.pageProps.product.prices[0].price.value.currencyCode"}
+      # The tracker rejects a whole delivery over one unknown status, so others are left out.
       availability:
         type: string
         pipe:
           - {xpath: "//script[@id='__NEXT_DATA__']/text()"}
           - {parse: json}
           - {jsonpath: "$.props.pageProps.product.availability[0].status"}
+          - {replace: ["-", "_"]}
+          - {regex: '^(?:in_stock|out_of_stock)$'}
