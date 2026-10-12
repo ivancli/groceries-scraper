@@ -279,6 +279,24 @@ Re-run the `scrape-job-template` line after changing the local overlay. The Disp
 ServiceAccount may only create and get Jobs and ConfigMaps. Its Jobs are labelled like
 manual ones, so `kubectl get jobs -l groceries-scraper/site=aldi_picks` shows them.
 
+### Coordinate retailer traffic
+
+Price Jobs given the `scrape-coordinator` Secret take a shared Retailer Permit for every
+request to their retailer, so overlapping Jobs (and, later, Product Search) keep the
+strictest Site's pace together ([traffic coordination](docs/traffic-coordination.md)). Run
+setup again after changing a Site's `download_delay` or `concurrent_requests_per_domain`:
+
+```bash
+kubectl apply -k deploy/k8s/overlays/local/coordinator
+kubectl port-forward statefulset/postgres 55433:5432 &
+SCRAPE_SINK=postgresql://scrape@localhost:55433/scrape PGPASSWORD=local-only \
+  SCRAPE_COORDINATOR_PASSWORD=local-only-coordinator uv run scrape coordinator setup
+```
+
+Then refresh the `scrape-job-template` ConfigMap as above. Jobs that were already running
+stay uncoordinated until they finish. `scrape coordinator status` shows the search slot,
+and `scrape coordinator recover` frees it once its owner is confirmed terminated.
+
 ### Clean up dispatched Runs
 
 `scrape janitor` runs daily at 03:30 UTC (or when the PC is next on) as a CronJob

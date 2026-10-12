@@ -44,6 +44,9 @@ spec:
             - secretRef:
                 name: scrape-sinks
                 optional: true
+            - secretRef:  # with it, every retailer request waits for a shared permit
+                name: scrape-coordinator
+                optional: true
           resources:
             requests:
               cpu: 250m

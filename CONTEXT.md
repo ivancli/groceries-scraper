@@ -177,6 +177,14 @@ _Avoid_: Snapshot, status
 A **Price Observation** whose **Product State** differs from the previous successful one for that product and **Location**; the only kind of observation sent to the tracker.
 _Avoid_: Update, delta, event
 
+**Retailer Permit**:
+Leave for one request to a retailer, shared by every price **Job** and Product Search through the coordination store; paced and limited in flight by the retailer's strictest **Site** policy.
+_Avoid_: Token, rate limit, slot
+
+**Search Admission**:
+The single fresh-search slot, held by one fenced execution until its cleanup is verified or the operator recovers it; distinct work gets Busy, never a queue.
+_Avoid_: Lock, lease, queue
+
 **Check Health**:
 Whether checks of one product at one **Location** currently succeed (`ok`) or fail (`failing`); only transitions are sent to the tracker.
 _Avoid_: Status, Run Health

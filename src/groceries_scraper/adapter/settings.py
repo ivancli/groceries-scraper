@@ -9,6 +9,7 @@ from groceries_scraper.run import Run
 
 if TYPE_CHECKING:
     from groceries_scraper.adapter.replay import ReplayIndex
+    from groceries_scraper.adapter.traffic import RetailerTraffic
 
 # Custom settings carrying the Run and `--limit` to the Record pipeline.
 RUN = "GROCERIES_RUN"
@@ -18,7 +19,11 @@ REPLAY = "GROCERIES_REPLAY"
 
 
 def scrapy_settings(
-    site: Site, run: Run, limit: int | None = None, replay: "ReplayIndex | None" = None
+    site: Site,
+    run: Run,
+    limit: int | None = None,
+    replay: "ReplayIndex | None" = None,
+    traffic: "RetailerTraffic | None" = None,
 ) -> dict[str, Any]:
     settings: dict[str, Any] = {
         "DOWNLOAD_DELAY": site.settings.download_delay,
@@ -52,6 +57,8 @@ def scrapy_settings(
             *default_settings.RETRY_EXCEPTIONS,
             "playwright.async_api.TimeoutError",
         ]
+    if traffic is not None and replay is None:
+        _coordinate(settings, traffic)
     if replay is not None:
         settings[REPLAY] = replay
         # After CaptureMiddleware's process_request, so served Captures are timed and recorded.
@@ -62,3 +69,19 @@ def scrapy_settings(
         settings["ROBOTSTXT_OBEY"] = False
         settings["DOWNLOAD_DELAY"] = 0
     return settings
+
+
+def _coordinate(settings: dict[str, Any], traffic: "RetailerTraffic") -> None:
+    from groceries_scraper.adapter.traffic import TRAFFIC, BrowserPermits
+
+    settings[TRAFFIC] = traffic
+    handlers = settings.get("DOWNLOAD_HANDLERS", {})
+    browser = any("Playwright" in handler for handler in handlers.values())
+    handler = "groceries_scraper.adapter.traffic.Coordinated" + (
+        "PlaywrightDownloadHandler" if browser else "HTTPDownloadHandler"
+    )
+    settings["DOWNLOAD_HANDLERS"] = {"http": handler, "https": handler}
+    if browser:
+        settings["PLAYWRIGHT_ABORT_REQUEST"] = BrowserPermits(traffic)
+        # A service worker's requests bypass page routing, and so the permits.
+        settings["PLAYWRIGHT_CONTEXTS"] = {"default": {"service_workers": "block"}}

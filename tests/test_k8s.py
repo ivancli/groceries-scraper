@@ -56,7 +56,10 @@ def test_local_job_runs_the_dev_image_as_a_non_root_host_user(local_job: dict[st
         "requests": {"cpu": "250m", "memory": "512Mi"},
         "limits": {"memory": "1Gi"},
     }
-    assert container["envFrom"] == [{"secretRef": {"name": "scrape-sinks", "optional": True}}]
+    assert container["envFrom"] == [
+        {"secretRef": {"name": "scrape-sinks", "optional": True}},
+        {"secretRef": {"name": "scrape-coordinator", "optional": True}},
+    ]
     assert pod["securityContext"]["runAsNonRoot"] is True
     assert pod["securityContext"]["runAsUser"] == 1000
     assert container["securityContext"]["allowPrivilegeEscalation"] is False

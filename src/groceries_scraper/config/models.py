@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
@@ -424,11 +425,22 @@ def _not_blank(value: str) -> str:
     return value
 
 
+_HOSTNAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
+
+
+def _hostname(host: str) -> str:
+    if not _HOSTNAME.fullmatch(host):
+        raise _config_error(f"`{host}` is not a lowercase hostname")
+    return host
+
+
 class RetailerRef(_Model):
     """The retailer an Accepts Rule's links belong to; the tracker keeps Home Stores per `key`."""
 
     key: Annotated[str, AfterValidator(_retailer_key)]
     name: Annotated[str, AfterValidator(_not_blank)]
+    # The retailer's hostnames, subdomains included, that share its traffic limits.
+    hosts: list[Annotated[str, AfterValidator(_hostname)]] = Field(default_factory=list)
 
 
 class AcceptsRule(_Model):
@@ -442,6 +454,13 @@ class AcceptsRule(_Model):
     def matches(self, url: str) -> bool:
         # ASCII classes, like JavaScript's without the `u` flag.
         return re.search(self.url, url, re.ASCII) is not None
+
+    @property
+    def retailer_hosts(self) -> tuple[str, ...]:
+        """Declared `hosts`, or else the examples' hostnames."""
+        if self.retailer.hosts:
+            return tuple(self.retailer.hosts)
+        return tuple(sorted({urlsplit(example).hostname or "" for example in self.examples} - {""}))
 
 
 def _price_record() -> dict[str, ContractField]:

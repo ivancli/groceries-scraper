@@ -6,6 +6,7 @@ from scrapy.crawler import CrawlerProcess
 from groceries_scraper.adapter.replay import SourceRun
 from groceries_scraper.adapter.settings import RECORDER, scrapy_settings
 from groceries_scraper.adapter.spider import SiteSpider
+from groceries_scraper.adapter.traffic import RetailerTraffic
 from groceries_scraper.config import Site
 from groceries_scraper.run import Run
 from groceries_scraper.run.health import assess_health
@@ -23,7 +24,9 @@ def crawl(
 ) -> RunOutcome:
     """Blocks until the crawl ends; Twisted allows one per process."""
     index = replay_of.index if replay_of is not None else None
-    settings = scrapy_settings(site, run, limit, index)
+    # A Replay sends nothing to the retailer.
+    traffic = RetailerTraffic.from_environment(site) if replay_of is None else None
+    settings = scrapy_settings(site, run, limit, index, traffic)
     source = replay_of.run if replay_of is not None else None
     # Set by a Kubernetes Job through the Downward API, to trace the Run back to it.
     job = os.environ.get("SCRAPE_JOB_NAME")
