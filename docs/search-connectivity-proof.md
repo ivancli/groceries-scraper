@@ -108,8 +108,8 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | C4 | No public route | Tunnel has no public hostname or network route; `kubectl get svc -A`; `kubectl get pods -l app.kubernetes.io/part-of=groceries-scraper -o jsonpath='{..hostNetwork}'` | no NodePort/LoadBalancer; empty `hostNetwork` output |
 | C5 | Wrong origin credential | `wrangler secret put SCRAPER_ORIGIN_TOKEN` with another value, run `ok` | `rejected`, 401 `unauthorized`; then restore |
 | C6 | Missing origin credential (from inside the pod: the Worker always sends one) | `kubectl exec deploy/scraper-search -- python -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8080/v1/search', b'{}'))"` | HTTP 401 `unauthorized` |
-| C7 | Restricted ingress | `kubectl run probe --rm -it --image=curlimages/curl --restart=Never -- curl -m 5 http://scraper-search:8080/healthz` | times out |
-| C8 | No egress from the responder | `kubectl exec deploy/scraper-search -- python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"` | fails |
+| C7 | Restricted ingress | `kubectl run probe --rm -it --image=curlimages/curl --restart=Never -- curl -m 5 http://scraper-search:8080/healthz` | refused at once or times out (k3s rejects rather than drops); the API still answers inside its own pod |
+| C8 | No egress from the responder | `kubectl exec deploy/scraper-search -- python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"` | refused or times out, while an unrestricted pod can reach the same address |
 | C9 | Non-root, no stray mounts | `kubectl exec deploy/scraper-search -- id`; `… -- ls /var/run/secrets` | uid 10001; only `scraper-search`, no `kubernetes.io` token |
 | C10 | Connector outage | `kubectl scale deploy/scraper-search-connector --replicas=0`, run `ok` | bounded failure within 10 s, recorded verbatim; passes again after scaling back |
 | C11 | API outage | `kubectl scale deploy/scraper-search --replicas=0`, run `ok` | bounded failure within 10 s; passes after scaling back |
@@ -123,8 +123,8 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 
 ## Evidence record
 
-**Status: partial, 2026-10-12.** The route proof (step 5) passed; checks with no recorded
-outcome below are not run. Activation stays blocked until every check passes.
+**Status: passed, 2026-10-12.** Every check passed over the real private route. This proves
+the route with fixtures only; it says nothing about retailer timing, which #89 measures.
 
 | Field | Value |
 | --- | --- |
@@ -134,7 +134,7 @@ outcome below are not run. Activation stays blocked until every check passes.
 | k3d/k3s version | k3d v5.9.0, k3s v1.35.5+k3s1 |
 | `cloudflared` image | `cloudflare/cloudflared:2026.10.0`, reports Version 2026.10.0 |
 | Tunnel ID / VPC Service ID | `646ba327-4365-4829-9625-10a09b994d15` / `01a12ddb-9346-7b50-b502-2c06fcab314a` |
-| Test Worker version ID | not recorded |
+| Test Worker version ID | `03f75faa-73ad-4a20-8ef0-26577389a5f3` (after the C16b redeploy) |
 | Proof responder image digest, `--terminal-delay-ms` | `sha256:e8ad31a4a08b31f5f19b9b34bef06d68f81720614c00a57aabd290a98cc139fa`, 3000 |
 | `acceptedMs` over ten `ok` runs (min / median / max) | 36 / 45.5 / 149 |
 | `terminalMs` over ten `ok` runs (min / median / max) | 3041 / 3047.5 / 3156 |
@@ -145,11 +145,24 @@ outcome below are not run. Activation stays blocked until every check passes.
 | C1 Account access | Pass: VPC Service created, test Worker deployed with the binding, ten proof runs succeeded |
 | C2 QUIC over UDP 7844 | Pass: four connections registered `protocol=quic` (syd06, syd08) |
 | C3 Cluster DNS/ClusterIP routing | Pass: ten of ten runs `passed: true`; every scenario its expected outcome in all ten |
-| C4 No public route | Partial: `scraper-search` is `ClusterIP`; neither pod uses `hostNetwork`. Tunnel hostname/route check in the dashboard not recorded |
-| C9 Non-root, no stray mounts | Partial: uid 10001 and 65532, `automountServiceAccountToken: false`, each pod mounts only its own Secret (+ `/tmp` emptyDir). In-pod `id`/`ls` not run |
+| C4 No public route | Pass: tunnel has no public hostname or route (dashboard, confirmed by the operator); `scraper-search` is `ClusterIP`; neither pod uses `hostNetwork` |
+| C5 Wrong origin credential | Pass: `rejected`, 401 `unauthorized`; passed again after restoring it |
+| C6 Missing origin credential | Pass: in-pod request without a credential got `HTTPError 401` `unauthorized` |
+| C7 Restricted ingress | Pass: a probe pod was refused at once (curl exit 7); the API answers inside its own pod |
+| C8 No egress from the responder | Pass: connection to 1.1.1.1:443 refused at once; an unrestricted pod reached it (HTTP 301) |
+| C9 Non-root, no stray mounts | Pass: `uid=10001`; `/var/run/secrets` holds only `scraper-search`; connector uid 65532; no service-account token; each pod mounts only its own Secret (+ `/tmp` emptyDir) |
+| C10 Connector outage | Pass: `unreachable` after 12 ms; passed after scaling back |
+| C11 API outage | Pass: `unreachable` after 57 ms; passed after scaling back |
+| C12 API restart mid-search | Pass: a rollout restart drained the search (the responder, as PID 1, ignores SIGTERM, so the pod waits out its 30 s grace); a forced kill failed it `disconnected` at 3131 ms; the new pod logged no replay |
+| C13 Connector restart mid-search | Pass: rollout restart and force-delete both drained it; SIGKILL of `cloudflared` failed it `disconnected` at 6040 ms; the next run passed |
 | C14 Delay | Pass: `late` failed `admission_timeout` at 2000 ms in all ten runs |
-| C17 No retailer traffic | Partial: responder log holds only `POST /v1/search` (99) and `GET /healthz` (381); C8 not run |
-| C5–C8, C10–C13, C15, C16, C16b | Not run |
+| C15 Laptop offline or asleep | Pass: bounded failure while offline and recovery afterwards, confirmed by the operator; timings not recorded |
+| C16 Origin credential rotation | Pass: rotated Secret took effect after 9 s with no pod restart; 401 until the Worker secret was updated, then passed |
+| C16b Tunnel and proof token rotation | Pass: old proof token 401, new one passes; tunnel token refreshed and applied with `setup.sh`, smoke proof passed (operator) |
+| C17 No retailer traffic | Pass: responder log holds only `POST /v1/search` and `GET /healthz`; C8 holds |
+
+Follow-up for #88: the real service should handle SIGTERM, so a restart doesn't wait out the
+full grace period.
 
 Known limit: the responder's execution slot is per process, and `Recreate` is what stops two
 pods overlapping. That is enough for fixtures; the real service needs the authoritative
