@@ -185,8 +185,11 @@ def proof_responder(
     token_file: Annotated[
         Path, typer.Option(help="The origin credential, re-read on every request.")
     ],
-    host: str = "0.0.0.0",  # the connector reaches it from another pod
-    port: int = 8080,
+    host: Annotated[
+        str,
+        typer.Option(help="Listen address; all interfaces so the connector's pod can reach it."),
+    ] = "0.0.0.0",
+    port: Annotated[int, typer.Option(help="0 picks a free port.")] = 8080,
     terminal_delay_ms: Annotated[
         int, typer.Option(help="Hold the terminal frame this long after acceptance.")
     ] = 3000,

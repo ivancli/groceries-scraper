@@ -1,7 +1,4 @@
-"""A harmless search v1 responder that proves the private route before any real search exists.
-
-It speaks the contract's NDJSON admission framing over fixtures only and makes no outbound requests.
-"""
+"""A fixture-only search v1 origin that proves the private route before any real search exists."""
 
 import hmac
 import json
@@ -113,7 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
         if request is None:
             return self._reject(400, "invalid_request")
         if not self.server.slot.acquire(blocking=False):
-            return self._reject(503, "busy")
+            return self._reject(409, "busy")
         try:
             try:
                 self._stream(request)

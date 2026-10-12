@@ -54,10 +54,16 @@ def token_file(tmp_path: Path) -> Path:
     return path
 
 
-def prove(origin: str, *scenarios: str, token: str = TOKEN) -> dict[str, Any]:
+def proof_command(origin: str, *args: str, token: str = TOKEN) -> dict[str, Any]:
+    return {
+        "args": ["node", WORKER / "scripts" / "local-proof.mjs", "--origin", origin, *args],
+        "env": {**os.environ, "SCRAPER_ORIGIN_TOKEN": token},
+    }
+
+
+def prove(origin: str, *args: str, token: str = TOKEN) -> dict[str, Any]:
     result = subprocess.run(
-        ["node", WORKER / "scripts" / "local-proof.mjs", "--origin", origin, *scenarios],
-        env={**os.environ, "SCRAPER_ORIGIN_TOKEN": token},
+        **proof_command(origin, *args, token=token),
         capture_output=True,
         text=True,
         timeout=60,
@@ -70,7 +76,7 @@ def prove(origin: str, *scenarios: str, token: str = TOKEN) -> dict[str, Any]:
 
 def test_every_fixture_scenario_ends_as_the_proof_expects(token_file: Path) -> None:
     with responder(token_file, terminal_delay_ms=300) as origin:
-        report = prove(origin)
+        report = prove(origin, "--terminal-delay-ms", "300")
 
     outcomes = {run["scenario"]: (run["ok"], run.get("failure")) for run in report["runs"]}
     assert outcomes == {
@@ -89,10 +95,19 @@ def test_acceptance_is_visible_long_before_a_deliberately_delayed_result(
     token_file: Path,
 ) -> None:
     with responder(token_file, terminal_delay_ms=2500) as origin:
-        (run,) = prove(origin, "ok")["runs"]
+        (run,) = prove(origin, "ok", "--terminal-delay-ms", "2500")["runs"]
+
+    assert run["passed"] is True
+    assert run["acceptedMs"] < 2000 <= 2500 <= run["terminalMs"] < 10_000
+
+
+def test_a_result_that_lost_its_delay_on_the_way_fails_the_proof(token_file: Path) -> None:
+    # As if the route buffered the stream: the result arrives with, not after, the acceptance.
+    with responder(token_file, terminal_delay_ms=0) as origin:
+        (run,) = prove(origin, "ok", "--terminal-delay-ms", "300")["runs"]
 
     assert run["ok"] is True
-    assert run["acceptedMs"] < 2000 <= 2500 <= run["terminalMs"] < 10_000
+    assert run["passed"] is False
 
 
 def test_a_wrong_origin_credential_fails_the_proof(token_file: Path) -> None:
@@ -127,14 +142,13 @@ def test_a_search_in_flight_makes_the_proof_busy(token_file: Path) -> None:
         (run,) = prove(origin, "ok")["runs"]
         admitted.close()
 
-    assert (run["failure"], run["status"], run["code"]) == ("rejected", 503, "busy")
+    assert (run["failure"], run["status"], run["code"]) == ("rejected", 409, "busy")
 
 
 def test_a_responder_killed_mid_search_is_a_bounded_failure(token_file: Path) -> None:
     with responder(token_file, terminal_delay_ms=5000) as origin:
         proof = subprocess.Popen(
-            ["node", WORKER / "scripts" / "local-proof.mjs", "--origin", origin, "ok"],
-            env={**os.environ, "SCRAPER_ORIGIN_TOKEN": TOKEN},
+            **proof_command(origin, "ok"),
             stdout=subprocess.PIPE,
             text=True,
         )

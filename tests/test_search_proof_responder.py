@@ -177,7 +177,7 @@ def test_a_second_search_is_busy_until_the_admitted_one_finishes(
     first.readline()  # admitted: the single execution slot is held
 
     assert rejection(post(responder, search(request_id="second"))) == (
-        503,
+        409,
         {"contract_version": 1, "type": "rejected", "code": "busy"},
     )
     first.read()
@@ -203,7 +203,7 @@ def test_a_disconnected_caller_frees_the_slot_without_waiting_for_its_terminal_f
         abandoned.close()  # the Worker gave up, e.g. its deadline passed
 
         deadline = time.monotonic() + 2
-        while (response := post(server, search(request_id="next"))).status == 503:
+        while (response := post(server, search(request_id="next"))).status == 409:
             assert time.monotonic() < deadline, "the slot was never released"
             time.sleep(0.05)
 
