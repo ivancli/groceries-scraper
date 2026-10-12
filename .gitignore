@@ -11,3 +11,7 @@ dist/
 # Run output
 /runs/
 /backups/
+
+# Search proof: the Worker config with a real VPC Service ID
+/deploy/search-proof/worker/wrangler.local.jsonc
+/deploy/search-proof/worker/.wrangler/
