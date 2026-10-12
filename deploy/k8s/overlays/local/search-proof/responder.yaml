@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scraper-search
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scraper-search
+spec:
+  type: ClusterIP  # reached through the connector only: no NodePort, LoadBalancer or Ingress
+  selector:
+    app.kubernetes.io/name: scraper-search
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper-search
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # never two owners of the single execution slot
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scraper-search
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scraper-search
+    spec:
+      serviceAccountName: scraper-search
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001  # the image's scraper user: nothing here is a host file
+        runAsGroup: 10001
+        fsGroup: 10001  # lets that user read the 0440 credential
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: responder
+          image: groceries-scraper
+          imagePullPolicy: Never  # imported with `k3d image import`, never pulled
+          args:
+            - proof-responder
+            - --token-file
+            - /var/run/secrets/scraper-search/token
+            - --port
+            - "8080"
+            - --terminal-delay-ms
+            - "3000"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: origin
+              mountPath: /var/run/secrets/scraper-search
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: origin
+          secret:
+            secretName: scraper-search-origin  # the Worker-to-API credential, and nothing else
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

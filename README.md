@@ -316,6 +316,15 @@ kubectl exec postgres-0 -- psql -U scrape -d "$db" -c \
   'SELECT (SELECT count(*) FROM scrape_runs) runs, (SELECT count(*) FROM scrape_records) records'
 ```
 
+### Prove the private search route
+
+Product Search will reach the scraper only through a private Workers VPC Service and its own
+`cloudflared` connector. Before any real search runs,
+[the route proof](docs/search-connectivity-proof.md) exercises that path with a fixture-only
+responder (`scrape proof-responder`), the
+[`search-proof`](deploy/k8s/overlays/local/search-proof) overlay and an isolated test Worker,
+and records the evidence there.
+
 ## Save and test Golden Fixtures
 
 Finish a crawl without `--limit`, with recording enabled, then save it:

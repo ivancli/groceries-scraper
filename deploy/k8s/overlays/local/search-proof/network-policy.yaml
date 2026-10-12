@@ -1,0 +1,62 @@
+# Enforced by k3s's embedded policy controller; the runbook checks enforcement, not just presence.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scraper-search
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scraper-search
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: scraper-search-connector
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []  # fixtures only: no retailer, no LAN, no DNS
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scraper-search-connector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: scraper-search-connector
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:  # Cloudflare's edge is public: the home LAN and cluster ranges stay shut
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+      ports:
+        - protocol: UDP
+          port: 7844
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: scraper-search
+      ports:
+        - protocol: TCP
+          port: 8080
