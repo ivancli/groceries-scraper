@@ -323,7 +323,13 @@ Product Search will reach the scraper only through a private Workers VPC Service
 [the route proof](docs/search-connectivity-proof.md) exercises that path with a fixture-only
 responder (`scrape proof-responder`), the
 [`search-proof`](deploy/k8s/overlays/local/search-proof) overlay and an isolated test Worker,
-and records the evidence there.
+and records the evidence there. After two dashboard steps (a tunnel and a VPC Service), one
+command sets up the route on the current cluster, or on a new one:
+
+```bash
+TUNNEL_TOKEN_FILE=~/.config/groceries-search-proof/tunnel-token VPC_SERVICE_ID=<id> \
+  deploy/search-proof/setup.sh
+```
 
 ## Save and test Golden Fixtures
 
