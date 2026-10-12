@@ -93,7 +93,7 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | C1 | Account access | step 3 and 4 succeed | VPC Service created and bound |
 | C2 | QUIC over UDP 7844 | connector logs | connections registered with `protocol=quic` |
 | C3 | Cluster DNS/ClusterIP routing | step 5 | every scenario as expected |
-| C4 | No public route | Tunnel has no public hostname or network route; `kubectl get svc -A`; `kubectl get pods -l app.kubernetes.io/part-of=groceries-scraper -o jsonpath='{..hostNetwork}'` | no NodePort/LoadBalancer; empty `hostNetwork` output |
+| C4 | No public route | Tunnel has no public hostname or network route; `kubectl get svc -A`; `kubectl get pods -l 'app.kubernetes.io/name in (scraper-search,scraper-search-connector)' -o jsonpath='{..hostNetwork}'` (pod templates carry only the name label) | no NodePort/LoadBalancer; two pods matched, empty `hostNetwork` output |
 | C5 | Wrong origin credential | `wrangler secret put SCRAPER_ORIGIN_TOKEN` with another value, run `ok` | `rejected`, 401 `unauthorized`; then restore |
 | C6 | Missing origin credential (from inside the pod: the Worker always sends one) | `kubectl exec deploy/scraper-search -- python -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8080/v1/search', b'{}'))"` | HTTP 401 `unauthorized` |
 | C7 | Restricted ingress | `kubectl run probe --rm -it --image=curlimages/curl --restart=Never -- curl -m 5 http://scraper-search:8080/healthz` | times out |
@@ -111,22 +111,33 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 
 ## Evidence record
 
-**Status: not run.** Fill in from a real run; leave nothing inferred.
+**Status: partial, 2026-10-12.** The route proof (step 5) passed; checks with no recorded
+outcome below are not run. Activation stays blocked until every check passes.
 
 | Field | Value |
 | --- | --- |
-| Date, operator | |
-| Laptop OS, sleep settings, network (home Wi-Fi, other) | |
-| Worker colo (`cf-ray` suffix of the proof response) | |
-| k3d/k3s version | |
-| `cloudflared` image | `cloudflare/cloudflared:2026.10.0` (from the overlay) |
-| Tunnel ID / VPC Service ID | |
-| Test Worker version ID | |
-| Proof responder image digest, `--terminal-delay-ms` | |
-| `acceptedMs` over ten `ok` runs (min / median / max) | |
-| `terminalMs` over ten `ok` runs (min / median / max) | |
-| C1–C17 (and C16b) outcomes | |
-| Failures and decisions raised | |
+| Date, operator | 2026-10-12, Ivan Li |
+| Laptop OS, sleep settings, network (home Wi-Fi, other) | WSL2 (Linux 6.6.87.2-microsoft-standard-WSL2); sleep settings and network not recorded |
+| Worker colo (`cf-ray` suffix of the proof response) | SYD, all ten runs |
+| k3d/k3s version | k3d v5.9.0, k3s v1.35.5+k3s1 |
+| `cloudflared` image | `cloudflare/cloudflared:2026.10.0`, reports Version 2026.10.0 |
+| Tunnel ID / VPC Service ID | `646ba327-4365-4829-9625-10a09b994d15` / `01a12ddb-9346-7b50-b502-2c06fcab314a` |
+| Test Worker version ID | not recorded |
+| Proof responder image digest, `--terminal-delay-ms` | `sha256:e8ad31a4a08b31f5f19b9b34bef06d68f81720614c00a57aabd290a98cc139fa`, 3000 |
+| `acceptedMs` over ten `ok` runs (min / median / max) | 36 / 45.5 / 149 |
+| `terminalMs` over ten `ok` runs (min / median / max) | 3041 / 3047.5 / 3156 |
+| Failures and decisions raised | none |
+
+| Check | Outcome |
+| --- | --- |
+| C1 Account access | Pass: VPC Service created, test Worker deployed with the binding, ten proof runs succeeded |
+| C2 QUIC over UDP 7844 | Pass: four connections registered `protocol=quic` (syd06, syd08) |
+| C3 Cluster DNS/ClusterIP routing | Pass: ten of ten runs `passed: true`; every scenario its expected outcome in all ten |
+| C4 No public route | Partial: `scraper-search` is `ClusterIP`; neither pod uses `hostNetwork`. Tunnel hostname/route check in the dashboard not recorded |
+| C9 Non-root, no stray mounts | Partial: uid 10001 and 65532, `automountServiceAccountToken: false`, each pod mounts only its own Secret (+ `/tmp` emptyDir). In-pod `id`/`ls` not run |
+| C14 Delay | Pass: `late` failed `admission_timeout` at 2000 ms in all ten runs |
+| C17 No retailer traffic | Partial: responder log holds only `POST /v1/search` (99) and `GET /healthz` (381); C8 not run |
+| C5–C8, C10–C13, C15, C16, C16b | Not run |
 
 Known limit: the responder's execution slot is per process, and `Recreate` is what stops two
 pods overlapping. That is enough for fixtures; the real service needs the authoritative
