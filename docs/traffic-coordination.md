@@ -22,7 +22,9 @@ created by `scrape coordinator setup` as the database owner:
 
 The restricted role (`scrape_coordinator`, Secret `scrape-coordinator`) has `USAGE` on the
 schema and `EXECUTE` on `admit_search`, `end_search`, `acquire_permit` and
-`release_permit` only. These `SECURITY DEFINER` functions are the whole interface: the role
+`release_permit` only. `acquire_permit` holds a share lock on the search execution's row
+until it commits, so an execution that is ending can't be granted a permit that would
+outlive it. These `SECURITY DEFINER` functions are the whole interface: the role
 has no table privileges, so it can't read Price Observations, the Dispatcher store or Sink
 tables, can't edit permits or policies directly, and can't call `recover_search`. Tests
 check each of these refusals.
@@ -64,16 +66,22 @@ flight ends.
 A request is the retailer's when its host is one of the Accepts Rule's `retailer.hosts`
 or a subdomain of one. Without `hosts`, the hosts of `accepts.examples` are used. Requests
 to other hosts aren't the retailer's traffic and aren't gated. Permits are released when
-the request finishes or fails, or when its page closes. The browser context blocks service
-workers because their requests bypass page routing. Not covered: WebSockets and
-dedicated-worker requests. No current Site uses them. A search adapter that needs them must
+the request finishes or fails, or when its page closes. A permit granted after its page
+closed is released at once. Only the permit's holder can release it. The browser context blocks service
+workers because their requests bypass page routing. Not covered: WebSockets,
+dedicated-worker requests and popup pages. No current Site uses them. A search adapter that needs them must
 block them, or extend this coverage first.
 
 A price Job waits for its permits. That changes only when it sends, not its collection or
 retry rules. If the coordinator is unreachable, its requests fail instead of going out
-uncoordinated, and those refs follow the existing failure backoff. A crashed Job's permits
+uncoordinated, and Scrapy doesn't retry them. This is the one deliberate change: a
+coordinator outage fails those refs, which then follow the Dispatcher's existing failure
+backoff. Only accepting Sites, the ones the Dispatcher schedules, are coordinated. A manual
+`scrape run` of a listing Site such as `aldi.yaml` is not, so don't run one while search is
+enabled. A crashed Job's permits
 lapse after their five-minute lease, which outlasts Scrapy's 180-second download timeout.
-A search never waits: the supervisor
+A search never waits, and gets no permits for a retailer without a configured policy: the
+supervisor
 ([#86](https://github.com/ivancli/groceries-scraper/issues/86)) gets permits for its child
 over IPC, so the child never holds the coordinator credential, and treats a wait as Busy.
 A search's permits end only with its execution. Blocking reviewed unnecessary resource

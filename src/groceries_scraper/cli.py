@@ -237,6 +237,7 @@ def coordinator_setup(
     ),
 ) -> None:
     """Create the coordination tables and role, and the retailers' traffic policies."""
+    from groceries_scraper.adapter.traffic import site_policy
     from groceries_scraper.coordination import CoordinatorAdmin, Policy
 
     policies: dict[str, Policy] = {}
@@ -244,13 +245,9 @@ def coordinator_setup(
         site = _load_site_or_exit(path)
         if site.accepts is None:
             continue
+        own = site_policy(site)
         key = site.accepts.retailer.key
-        own = Policy(site.settings.download_delay, site.settings.concurrent_requests_per_domain)
-        known = policies.get(key, own)
-        policies[key] = Policy(
-            max(known.min_interval, own.min_interval),
-            min(known.max_concurrent, own.max_concurrent),
-        )
+        policies[key] = policies.get(key, own).stricter(own)
     admin = CoordinatorAdmin(sink)
     admin.prepare(role, password)
     admin.set_policies(policies)
@@ -262,12 +259,12 @@ def coordinator_setup(
 
 @coordinator_app.command("status")
 def coordinator_status(sink: OwnerDsnOption) -> None:
-    """The execution holding the fresh-search slot, if any."""
+    """The search execution holding Search Admission, if any."""
     from groceries_scraper.coordination import CoordinatorAdmin
 
     active = CoordinatorAdmin(sink).active_searches()
     if not active:
-        typer.echo("The search slot is free.")
+        typer.echo("No search execution holds Search Admission.")
     for row in active:
         typer.echo(
             f"{row['execution_id']} fence {row['fence']} owner {row['owner']} "
@@ -290,7 +287,7 @@ def coordinator_recover(
     ] = False,
     note: Annotated[str, typer.Option(help="Why, for the record.")] = "",
 ) -> None:
-    """Free the search slot of an owner that can no longer report its own cleanup."""
+    """End a search execution whose owner can no longer report its own cleanup."""
     from groceries_scraper.coordination import CoordinatorAdmin
 
     if not owner_terminated:
@@ -303,7 +300,7 @@ def coordinator_recover(
     if not CoordinatorAdmin(sink).recover_search(execution_id, fence, owner, note):
         typer.echo(f"No active execution {execution_id} with fence {fence} owned by {owner}")
         raise typer.Exit(code=1)
-    typer.echo(f"Recovered {execution_id}; the search slot is free.")
+    typer.echo(f"Recovered {execution_id}; Search Admission is free.")
 
 
 def _dispatch_store_or_exit(sink: str) -> "DispatchStore":

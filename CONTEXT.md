@@ -178,11 +178,11 @@ A **Price Observation** whose **Product State** differs from the previous succes
 _Avoid_: Update, delta, event
 
 **Retailer Permit**:
-Leave for one request to a retailer, shared by every price **Job** and Product Search through the coordination store; paced and limited in flight by the retailer's strictest **Site** policy.
-_Avoid_: Token, rate limit, slot
+Leave for one request to a retailer, shared by every price **Job** and Product Search (the tracker's in-app retailer search) through the coordination store; paced and limited in flight by the retailer's strictest **Site** policy.
+_Avoid_: Token, rate limit
 
 **Search Admission**:
-The single fresh-search slot, held by one fenced execution until its cleanup is verified or the operator recovers it; distinct work gets Busy, never a queue.
+The one fresh Product Search allowed at a time, held by one fenced search execution (not a **Run**) until its cleanup is verified or the operator recovers it; distinct work gets Busy, never a queue.
 _Avoid_: Lock, lease, queue
 
 **Check Health**:

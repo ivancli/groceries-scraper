@@ -1,3 +1,5 @@
+"""Clients of the coordination schema: the restricted caller and the database owner."""
+
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -14,10 +16,12 @@ CALLER_FUNCTIONS = (
     "admit_search(text, text, text, timestamptz)",
     "end_search(text, bigint)",
     "acquire_permit(text, text, integer, integer, integer, text, bigint, boolean, boolean)",
-    "release_permit(bigint)",
+    "release_permit(bigint, text)",
 )
 
 AdmissionRefused = Literal["busy", "replayed", "expired"]
+# Search only: its admission has ended or expired, or the retailer has no configured policy.
+PermitRefused = Literal["stale", "unconfigured"]
 
 
 class CoordinatorUnavailable(Exception):
@@ -38,11 +42,18 @@ class Policy:
     min_interval: float
     max_concurrent: int
 
+    def stricter(self, other: "Policy") -> "Policy":
+        return Policy(
+            max(self.min_interval, other.min_interval),
+            min(self.max_concurrent, other.max_concurrent),
+        )
+
 
 @dataclass(frozen=True)
 class Permit:
     id: int
     retailer: str
+    holder: str
     granted_at: datetime
 
 
@@ -96,7 +107,7 @@ class Coordinator:
         execution: Admitted | None = None,
         paced: bool = True,
         charge: bool = False,
-    ) -> Permit | Wait | Literal["stale"]:
+    ) -> Permit | Wait | PermitRefused:
         """A price Job's permit lapses with its `lease`; a search's needs its current admission.
 
         An unpaced permit counts only toward requests in flight. `charge` accounts for a
@@ -118,14 +129,15 @@ class Coordinator:
                 charge,
             ),
         )
-        if refused == "stale":
-            return "stale"
+        if refused is not None:
+            refusal: PermitRefused = refused
+            return refusal
         if permit_id is None:
             return Wait(wait_until)
-        return Permit(permit_id, retailer, granted_at)
+        return Permit(permit_id, retailer, holder, granted_at)
 
     def release_permit(self, permit: Permit) -> None:
-        self._call("SELECT 1 FROM coordination.release_permit(%s)", (permit.id,))
+        self._call("SELECT 1 FROM coordination.release_permit(%s, %s)", (permit.id, permit.holder))
 
     def close(self) -> None:
         with self._lock:
@@ -199,7 +211,7 @@ class CoordinatorAdmin:
             ).fetchall()
 
     def recover_search(self, execution_id: str, fence: int, owner: str, note: str) -> bool:
-        """Frees the slot only once the operator has confirmed `owner` is terminated."""
+        """Call only after confirming `owner` is terminated; its deadline passing proves nothing."""
         with psycopg.connect(self.dsn, autocommit=True) as connection:
             row = connection.execute(
                 "SELECT coordination.recover_search(%s, %s, %s, %s)",

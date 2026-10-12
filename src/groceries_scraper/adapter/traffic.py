@@ -52,8 +52,9 @@ class RetailerTraffic:
 
             dsn = make_conninfo(dsn, password=password)
         holder = os.environ.get("SCRAPE_JOB_NAME") or f"{socket.gethostname()}:{os.getpid()}"
-        policy = Policy(site.settings.download_delay, site.settings.concurrent_requests_per_domain)
-        return cls(dsn, site.accepts.retailer.key, site.accepts.retailer_hosts, policy, holder)
+        return cls(
+            dsn, site.accepts.retailer.key, site.accepts.retailer_hosts, site_policy(site), holder
+        )
 
     def covers(self, url: str) -> bool:
         host = (urlsplit(url).hostname or "").lower()
@@ -73,8 +74,8 @@ class RetailerTraffic:
             )
             if isinstance(result, Permit):
                 return result
-            if result == "stale":  # only a search execution goes stale
-                raise CoordinatorUnavailable("a leased permit was refused as stale")
+            if isinstance(result, str):  # refusals are for search executions only
+                raise CoordinatorUnavailable(f"a leased permit was refused: {result}")
             delay = MAX_POLL
             if result.until is not None:
                 delay = (result.until - datetime.now(UTC)).total_seconds()
@@ -89,12 +90,16 @@ class RetailerTraffic:
         return self._coordinator
 
 
+def site_policy(site: Site) -> Policy:
+    return Policy(site.settings.download_delay, site.settings.concurrent_requests_per_domain)
+
+
 class _Gated:
     """Scrapy-level downloads: robots.txt, Session Setup, each redirect hop and retry."""
 
     _crawler: Crawler
 
-    async def _gated(self, request: Request) -> Response:
+    async def download_request(self, request: Request) -> Response:
         traffic: RetailerTraffic | None = self._crawler.settings.get(TRAFFIC)
         # A browser request is gated per network request by BrowserPermits instead.
         if traffic is None or request.meta.get(BROWSER) or not traffic.covers(request.url):
@@ -107,13 +112,11 @@ class _Gated:
 
 
 class CoordinatedHTTPDownloadHandler(_Gated, HTTP11DownloadHandler):
-    async def download_request(self, request: Request) -> Response:
-        return await self._gated(request)
+    pass
 
 
 class CoordinatedPlaywrightDownloadHandler(_Gated, ScrapyPlaywrightDownloadHandler):  # type: ignore[misc]
-    async def download_request(self, request: Request) -> Response:
-        return await self._gated(request)
+    pass
 
 
 @dataclass
@@ -126,18 +129,22 @@ class BrowserPermits:
 
     traffic: RetailerTraffic
     _held: dict[Any, Permit] = field(default_factory=dict, repr=False)
-    # Hops that finished before their charge was recorded.
+    # Retailer redirect hops that finished before their charge was recorded.
     _done: set[Any] = field(default_factory=set, repr=False)
     _pages: "weakref.WeakSet[Page]" = field(default_factory=weakref.WeakSet, repr=False)
 
     async def __call__(self, request: "BrowserRequest") -> bool:
         if not self.traffic.covers(request.url):
             return False
-        self._watch(request.frame.page)
+        page = request.frame.page
+        self._watch(page)
         try:
             permit = await self.traffic.acquire(paced=request.is_navigation_request())
         except CoordinatorUnavailable:
             return True  # aborted: an uncoordinated request is never sent
+        if page.is_closed():  # its close already released what it held
+            await self.traffic.release(permit)
+            return True
         self._held[request] = permit
         return False
 
@@ -155,7 +162,7 @@ class BrowserPermits:
             return
         paced = request.is_navigation_request()
         permit = await self.traffic.acquire(paced=paced, charge=True)
-        if request in self._done:
+        if request in self._done or request.frame.page.is_closed():
             self._done.discard(request)
             await self.traffic.release(permit)
         else:
@@ -164,7 +171,7 @@ class BrowserPermits:
     async def _finished(self, request: "BrowserRequest") -> None:
         if (permit := self._held.pop(request, None)) is not None:
             await self.traffic.release(permit)
-        elif request.redirected_from is not None:
+        elif request.redirected_from is not None and self.traffic.covers(request.url):
             self._done.add(request)
 
     async def _closed(self, page: "Page") -> None:

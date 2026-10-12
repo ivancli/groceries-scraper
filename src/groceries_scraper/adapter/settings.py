@@ -58,7 +58,7 @@ def scrapy_settings(
             "playwright.async_api.TimeoutError",
         ]
     if traffic is not None and replay is None:
-        _coordinate(settings, traffic)
+        _coordinate(settings, site, traffic)
     if replay is not None:
         settings[REPLAY] = replay
         # After CaptureMiddleware's process_request, so served Captures are timed and recorded.
@@ -71,12 +71,11 @@ def scrapy_settings(
     return settings
 
 
-def _coordinate(settings: dict[str, Any], traffic: "RetailerTraffic") -> None:
+def _coordinate(settings: dict[str, Any], site: Site, traffic: "RetailerTraffic") -> None:
     from groceries_scraper.adapter.traffic import TRAFFIC, BrowserPermits
 
     settings[TRAFFIC] = traffic
-    handlers = settings.get("DOWNLOAD_HANDLERS", {})
-    browser = any("Playwright" in handler for handler in handlers.values())
+    browser = any(page.renders_in_browser for page in site.page_types.values())
     handler = "groceries_scraper.adapter.traffic.Coordinated" + (
         "PlaywrightDownloadHandler" if browser else "HTTPDownloadHandler"
     )

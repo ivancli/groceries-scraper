@@ -53,13 +53,24 @@ DECLARE
     v_limit integer;
     v_active integer;
 BEGIN
-    IF p_execution IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM coordination.search_executions e
-        WHERE e.execution_id = p_execution AND e.fence = p_fence AND e.ended_at IS NULL
-            AND e.deadline_at > clock_timestamp()
-    ) THEN
-        RETURN QUERY SELECT NULL::bigint, NULL::timestamptz, NULL::timestamptz, 'stale';
-        RETURN;
+    IF p_execution IS NOT NULL THEN
+        -- Held until commit, so the execution can't end between this check and the grant.
+        PERFORM 1 FROM coordination.search_executions e
+            WHERE e.execution_id = p_execution AND e.fence = p_fence AND e.ended_at IS NULL
+                AND e.deadline_at > clock_timestamp()
+            FOR SHARE;
+        IF NOT FOUND THEN
+            RETURN QUERY SELECT NULL::bigint, NULL::timestamptz, NULL::timestamptz, 'stale';
+            RETURN;
+        END IF;
+        -- Search may only tighten a configured retailer's limits, never set them.
+        IF NOT EXISTS (
+            SELECT 1 FROM coordination.retailer_policies p WHERE p.retailer = p_retailer
+        ) THEN
+            RETURN QUERY SELECT NULL::bigint, NULL::timestamptz, NULL::timestamptz,
+                'unconfigured';
+            RETURN;
+        END IF;
     END IF;
     INSERT INTO coordination.retailer_pace VALUES (p_retailer, '-infinity') ON CONFLICT DO NOTHING;
     -- Serializes this retailer's grants across every Job and search.
@@ -97,9 +108,10 @@ BEGIN
         RETURNING p.id, p.granted_at, NULL::timestamptz, NULL::text;
 END $$;
 
-CREATE OR REPLACE FUNCTION coordination.release_permit(p_id bigint) RETURNS void
+CREATE OR REPLACE FUNCTION coordination.release_permit(p_id bigint, p_holder text)
+RETURNS void
 LANGUAGE sql SECURITY DEFINER SET search_path = coordination, pg_temp AS $$
-    DELETE FROM coordination.permits WHERE id = p_id;
+    DELETE FROM coordination.permits WHERE id = p_id AND holder = p_holder;
 $$;
 
 CREATE OR REPLACE FUNCTION coordination.admit_search(

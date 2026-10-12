@@ -1,4 +1,5 @@
 import os
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,8 @@ def restricted_dsn() -> str:
 
 @pytest.fixture
 def coordinator(admin: CoordinatorAdmin) -> Iterator[Coordinator]:
+    # Configured but lenient: each test's own policy is the binding one.
+    admin.set_policies({retailer: Policy(0, 100) for retailer in ("coles", "aldi")})
     coordinator = Coordinator(restricted_dsn())
     yield coordinator
     coordinator.close()
@@ -316,3 +319,43 @@ def test_the_coordination_role_reaches_only_the_coordination_functions(
     with psycopg.connect(restricted_dsn(), autocommit=True) as connection:
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             connection.execute(query)
+
+
+def test_a_permit_racing_the_executions_end_is_ended_with_it(coordinator: Coordinator) -> None:
+    single = Policy(min_interval=0, max_concurrent=1)
+    search = admitted(coordinator.admit_search("e1", "w", "api-a", soon()))
+    with psycopg.connect(restricted_dsn()) as racing:
+        # The grant is still uncommitted when the owner reports its cleanup.
+        grant = racing.execute(
+            "SELECT permit_id FROM coordination.acquire_permit"
+            "('coles', 'e1', 0, 1, NULL, 'e1', %s, true, false)",
+            (search.fence,),
+        ).fetchone()
+        assert grant is not None and grant[0] is not None
+        with ThreadPoolExecutor(1) as pool:
+            ended = pool.submit(coordinator.end_search, search)
+            time.sleep(0.3)  # let the end reach the database first
+            racing.commit()
+            assert ended.result(timeout=5) is True
+
+    granted(coordinator.acquire_permit("coles", "job-a", single, lease=LEASE))
+
+
+def test_search_gets_no_permits_for_a_retailer_without_a_configured_policy(
+    admin: CoordinatorAdmin, coordinator: Coordinator
+) -> None:
+    search = admitted(coordinator.admit_search("e1", "w", "api-a", soon()))
+
+    granted(coordinator.acquire_permit("coles", "e1", PACED, execution=search))
+    assert coordinator.acquire_permit("woolworths", "e1", PACED, execution=search) == (
+        "unconfigured"
+    )
+
+
+def test_a_permit_is_released_only_by_its_holder(coordinator: Coordinator) -> None:
+    single = Policy(min_interval=0, max_concurrent=1)
+    permit = granted(coordinator.acquire_permit("coles", "job-a", single, lease=LEASE))
+
+    coordinator.release_permit(Permit(permit.id, "coles", "job-b", permit.granted_at))
+
+    assert coordinator.acquire_permit("coles", "job-b", single, lease=LEASE) == Wait(None)
