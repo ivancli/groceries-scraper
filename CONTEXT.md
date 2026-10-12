@@ -185,6 +185,10 @@ _Avoid_: Token, rate limit
 The one fresh Product Search allowed at a time, held by one fenced search execution (not a **Run**) until its cleanup is verified or the operator recovers it; distinct work gets Busy, never a queue.
 _Avoid_: Lock, lease, queue
 
+**Search Adapter**:
+A reviewed definition of one retailer's search: the **Site** extraction it reuses, the fixed URL a query fills, and the tests that tell a genuine empty result from a block or a broken page; loaded apart from `sites/`, it never checks prices.
+_Avoid_: Search Site, search config
+
 **Check Health**:
 Whether checks of one product at one **Location** currently succeed (`ok`) or fail (`failing`); only transitions are sent to the tracker.
 _Avoid_: Status, Run Health

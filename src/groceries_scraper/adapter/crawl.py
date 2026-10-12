@@ -1,5 +1,7 @@
 import os
 import time
+from collections.abc import Mapping
+from typing import Any
 
 from scrapy.crawler import CrawlerProcess
 
@@ -21,12 +23,16 @@ def crawl(
     limit: int | None = None,
     replay_of: SourceRun | None = None,
     supply: Supply | None = None,
+    *,
+    traffic: RetailerTraffic | None = None,
+    overrides: Mapping[str, Any] | None = None,
 ) -> RunOutcome:
-    """Blocks until the crawl ends; Twisted allows one per process."""
+    """Blocks until the crawl ends; Twisted allows one per process.
+
+    `traffic` gates each request to the retailer; `overrides` replace Scrapy settings.
+    """
     index = replay_of.index if replay_of is not None else None
-    # A Replay sends nothing to the retailer.
-    traffic = RetailerTraffic.from_environment(site) if replay_of is None else None
-    settings = scrapy_settings(site, run, limit, index, traffic)
+    settings = scrapy_settings(site, run, limit, index, traffic) | dict(overrides or {})
     source = replay_of.run if replay_of is not None else None
     # Set by a Kubernetes Job through the Downward API, to trace the Run back to it.
     job = os.environ.get("SCRAPE_JOB_NAME")

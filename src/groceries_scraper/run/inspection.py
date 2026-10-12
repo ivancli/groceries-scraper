@@ -39,10 +39,10 @@ def inspect_capture(
 
 def _format_body(path: Path, meta: dict[str, Any]) -> str:
     try:
-        body = _decompress_body(path.read_bytes(), _header(meta, "Content-Encoding"))
+        body = decompress_body(path.read_bytes(), response_header(meta, "Content-Encoding"))
     except (OSError, EOFError, zlib.error) as exc:
         raise ValueError(f"Cannot decode response body {path}: {exc}") from exc
-    content_type = _header(meta, "Content-Type")
+    content_type = response_header(meta, "Content-Type")
     try:
         return json.dumps(json.loads(body), ensure_ascii=False, indent=2)
     except (ValueError, UnicodeError):
@@ -57,7 +57,7 @@ def _format_body(path: Path, meta: dict[str, Any]) -> str:
         return body.decode("utf-8", errors="replace")
 
 
-def _decompress_body(body: bytes, content_encoding: str) -> bytes:
+def decompress_body(body: bytes, content_encoding: str) -> bytes:
     encodings = content_encoding.lower().split(",")
     for encoding in reversed(encodings):
         match encoding.strip():
@@ -68,6 +68,10 @@ def _decompress_body(body: bytes, content_encoding: str) -> bytes:
                     body = zlib.decompress(body)
                 except zlib.error:
                     body = zlib.decompress(body, -zlib.MAX_WBITS)
+            case "br":
+                import brotli  # Scrapy's own Brotli support
+
+                body = brotli.decompress(body)
             case "" | "identity":
                 pass
             case _:
@@ -75,7 +79,7 @@ def _decompress_body(body: bytes, content_encoding: str) -> bytes:
     return body
 
 
-def _header(meta: dict[str, Any], name: str) -> str:
+def response_header(meta: dict[str, Any], name: str) -> str:
     for key, value in meta["response"].get("headers", {}).items():
         if key.lower() == name.lower():
             return ", ".join(value) if isinstance(value, list) else str(value)

@@ -84,8 +84,8 @@ A search never waits, and gets no permits for a retailer without a configured po
 supervisor
 ([#86](https://github.com/ivancli/groceries-scraper/issues/86)) gets permits for its child
 over IPC, so the child never holds the coordinator credential, and treats a wait as Busy.
-A search's permits end only with its execution. Blocking reviewed unnecessary resource
-types for search belongs to that runner.
+A search's permits end only with its execution. Search aborts images, media and fonts
+unsent ([search runner](search-runner.md)).
 
 ## Measured bounds
 
