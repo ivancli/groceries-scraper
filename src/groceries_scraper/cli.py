@@ -180,6 +180,30 @@ def janitor(
         typer.echo(f"{verb} Records and Start Request Outcomes of Run {site}/{run_id}")
 
 
+@app.command("proof-responder")
+def proof_responder(
+    token_file: Annotated[
+        Path, typer.Option(help="The origin credential, re-read on every request.")
+    ],
+    host: str = "0.0.0.0",  # the connector reaches it from another pod
+    port: int = 8080,
+    terminal_delay_ms: Annotated[
+        int, typer.Option(help="Hold the terminal frame this long after acceptance.")
+    ] = 3000,
+) -> None:
+    """Serve fixture-only search v1 streams to prove the private route; contacts no retailer."""
+    from groceries_scraper.search.proof import ProofResponder
+
+    if not token_file.is_file():
+        typer.echo(f"No origin credential at {token_file}", err=True)
+        raise typer.Exit(code=1)
+    server = ProofResponder(
+        (host, port), token_file=token_file, terminal_delay=terminal_delay_ms / 1000
+    )
+    typer.echo(f"Proof responder listening on {host}:{server.server_address[1]}", err=True)
+    server.serve_forever()
+
+
 def _dispatch_store_or_exit(sink: str) -> "DispatchStore":
     """The store shares the Sink's database: ingestion and the janitor read its tables."""
     from groceries_scraper.dispatch.store import DispatchStore

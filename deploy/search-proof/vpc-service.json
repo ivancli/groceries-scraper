@@ -1,0 +1,11 @@
+{
+  "type": "http",
+  "name": "groceries-search-proof",
+  "http_port": 8080,
+  "host": {
+    "hostname": "scraper-search.default.svc.cluster.local",
+    "resolver_network": {
+      "tunnel_id": "REPLACE_WITH_TUNNEL_ID"
+    }
+  }
+}

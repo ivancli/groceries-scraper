@@ -1,0 +1,22 @@
+// The isolated test Worker: never the tracker's Worker, never bound to anything but the proof's
+// VPC Service. Secrets (`wrangler secret put`): PROOF_TOKEN, SCRAPER_ORIGIN_TOKEN.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "groceries-search-proof",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    // The VPC Service fixes the real target; this host only fills the Host header.
+    "SCRAPER_API_URL": "http://scraper-search.default.svc.cluster.local:8080/v1/search"
+  },
+  "vpc_services": [
+    {
+      "binding": "SCRAPER_API",
+      // From `wrangler vpc service create`, as recorded in docs/search-connectivity-proof.md.
+      "service_id": "REPLACE_WITH_VPC_SERVICE_ID",
+      "remote": true
+    }
+  ]
+}
