@@ -6,7 +6,7 @@ settings:
 schedule: {every: 30m}
 accepts:
   page_type: product
-  retailer: {key: jbhifi, name: JB Hi-Fi}
+  retailer: {key: jbhifi, name: JB Hi-Fi, hosts: [jbhifi.com.au]}
   url: '^https://www\.jbhifi\.com\.au/products/[^/?#]+'
   examples:
     - https://www.jbhifi.com.au/products/apple-airpods-4

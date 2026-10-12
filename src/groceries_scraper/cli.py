@@ -67,6 +67,18 @@ fixture_app = typer.Typer(no_args_is_help=True, help="Manage Golden Fixtures.")
 app.add_typer(fixture_app, name="fixture")
 deploy_app = typer.Typer(no_args_is_help=True, help="Render Kubernetes Jobs.")
 app.add_typer(deploy_app, name="deploy")
+coordinator_app = typer.Typer(
+    no_args_is_help=True, help="Operate the shared search admission and retailer permits."
+)
+app.add_typer(coordinator_app, name="coordinator")
+OwnerDsnOption = Annotated[
+    str,
+    typer.Option(
+        "--sink",
+        envvar="SCRAPE_SINK",
+        help="postgresql://… as the database owner; the password comes from PGPASSWORD.",
+    ),
+]
 
 
 @deploy_app.command("job")
@@ -205,6 +217,90 @@ def proof_responder(
     )
     typer.echo(f"Proof responder listening on {host}:{server.server_address[1]}", err=True)
     server.serve_forever()
+
+
+@coordinator_app.command("setup")
+def coordinator_setup(
+    sink: OwnerDsnOption,
+    password: Annotated[
+        str,
+        typer.Option(
+            envvar="SCRAPE_COORDINATOR_PASSWORD",
+            help="The restricted role's password, as given to the Jobs and search service.",
+        ),
+    ],
+    role: Annotated[str, typer.Option(help="The restricted role to create.")] = (
+        "scrape_coordinator"
+    ),
+    sites: Annotated[Path, typer.Option(help="Each retailer gets its strictest Site's policy.")] = (
+        Path("sites")
+    ),
+) -> None:
+    """Create the coordination tables and role, and the retailers' traffic policies."""
+    from groceries_scraper.adapter.traffic import site_policy
+    from groceries_scraper.coordination import CoordinatorAdmin, Policy
+
+    policies: dict[str, Policy] = {}
+    for path in sorted([*sites.glob("*.yaml"), *sites.glob("*.yml")]):
+        site = _load_site_or_exit(path)
+        if site.accepts is None:
+            continue
+        own = site_policy(site)
+        key = site.accepts.retailer.key
+        policies[key] = policies.get(key, own).stricter(own)
+    admin = CoordinatorAdmin(sink)
+    admin.prepare(role, password)
+    admin.set_policies(policies)
+    for key, policy in sorted(policies.items()):
+        typer.echo(
+            f"{key}: {policy.min_interval}s apart, {policy.max_concurrent} in flight", err=True
+        )
+
+
+@coordinator_app.command("status")
+def coordinator_status(sink: OwnerDsnOption) -> None:
+    """The search execution holding Search Admission, if any."""
+    from groceries_scraper.coordination import CoordinatorAdmin
+
+    active = CoordinatorAdmin(sink).active_searches()
+    if not active:
+        typer.echo("No search execution holds Search Admission.")
+    for row in active:
+        typer.echo(
+            f"{row['execution_id']} fence {row['fence']} owner {row['owner']} "
+            f"admitted {row['admitted_at'].isoformat()} deadline {row['deadline_at'].isoformat()}"
+        )
+
+
+@coordinator_app.command("recover")
+def coordinator_recover(
+    execution_id: str,
+    sink: OwnerDsnOption,
+    fence: Annotated[int, typer.Option(help="From `coordinator status`.")],
+    owner: Annotated[str, typer.Option(help="The owner `coordinator status` shows.")],
+    owner_terminated: Annotated[
+        bool,
+        typer.Option(
+            "--owner-terminated",
+            help="Confirms the owner's Pod is gone (kubectl get pod reports NotFound).",
+        ),
+    ] = False,
+    note: Annotated[str, typer.Option(help="Why, for the record.")] = "",
+) -> None:
+    """End a search execution whose owner can no longer report its own cleanup."""
+    from groceries_scraper.coordination import CoordinatorAdmin
+
+    if not owner_terminated:
+        typer.echo(
+            "An expired deadline doesn't prove the owner's browser stopped: confirm the owner "
+            "is terminated, then pass --owner-terminated",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if not CoordinatorAdmin(sink).recover_search(execution_id, fence, owner, note):
+        typer.echo(f"No active execution {execution_id} with fence {fence} owned by {owner}")
+        raise typer.Exit(code=1)
+    typer.echo(f"Recovered {execution_id}; Search Admission is free.")
 
 
 def _dispatch_store_or_exit(sink: str) -> "DispatchStore":

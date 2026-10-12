@@ -30,7 +30,7 @@ site: aldi_picks
 schedule: {every: 30m}            # optional `enabled: false` pauses the Site (the kill switch)
 accepts:
   page_type: product
-  retailer: {key: aldi, name: ALDI}  # the tracker keeps Home Stores per `key`
+  retailer: {key: aldi, name: ALDI, hosts: [aldi.com.au]}  # Home Stores are per `key`; `hosts` share its Retailer Permits
   url: '^https://www\.aldi\.com\.au/product/'
 locations:                        # optional; `label` is shown in the tracker's Home Store picker
   sydney_g412: {label: "Sydney G412", service_point: G412}

@@ -7,7 +7,7 @@ settings:
 schedule: {every: 30m}
 accepts:
   page_type: product
-  retailer: {key: woolworths, name: Woolworths}
+  retailer: {key: woolworths, name: Woolworths, hosts: [woolworths.com.au]}
   url: '^https://www\.woolworths\.com\.au/shop/productdetails/\d+/[^/?#]+'
   examples:
     - https://www.woolworths.com.au/shop/productdetails/151299/dettol-antibacterial-disinfectant-liquid-solution
