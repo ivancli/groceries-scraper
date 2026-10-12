@@ -9,7 +9,9 @@
   "preview_urls": false,
   "vars": {
     // The VPC Service fixes the real target; this host only fills the Host header.
-    "SCRAPER_API_URL": "http://scraper-search.default.svc.cluster.local:8080/v1/search"
+    "SCRAPER_API_URL": "http://scraper-search.default.svc.cluster.local:8080/v1/search",
+    // Must match the responder's --terminal-delay-ms in the search-proof overlay.
+    "TERMINAL_DELAY_MS": "3000"
   },
   "vpc_services": [
     {

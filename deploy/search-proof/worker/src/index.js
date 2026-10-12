@@ -1,6 +1,6 @@
 // The isolated test Worker: drives fixture scenarios through the VPC Service binding to the
 // proof responder and reports admission/terminal timings. It never touches the tracker or a retailer.
-import { callSearch } from "./admission.js";
+import { CONTRACT_VERSION, callSearch } from "./admission.js";
 
 export const ADMISSION_MS = 2_000;
 export const TOTAL_MS = 10_000;
@@ -18,7 +18,7 @@ export const EXPECTED = {
 
 export default {
   async fetch(request, env) {
-    if (!env.PROOF_TOKEN || !env.SCRAPER_ORIGIN_TOKEN) {
+    if (!env.PROOF_TOKEN || !env.SCRAPER_ORIGIN_TOKEN || !(Number(env.TERMINAL_DELAY_MS) > 0)) {
       return Response.json({ error: "unconfigured" }, { status: 503 });
     }
     const supplied = request.headers.get("Authorization") ?? "";
@@ -56,10 +56,13 @@ export async function prove(env, scenarios) {
       totalMs: TOTAL_MS,
     });
     const expected = EXPECTED[scenario];
+    // A route that buffers would deliver both frames together, so the delay must survive too.
     const passed =
       outcome.ok === expected.ok &&
       outcome.failure === expected.failure &&
-      (!outcome.ok || outcome.acceptedMs < ADMISSION_MS);
+      (!outcome.ok ||
+        (outcome.acceptedMs < ADMISSION_MS &&
+          outcome.terminalMs - outcome.acceptedMs >= Number(env.TERMINAL_DELAY_MS) * 0.9));
     const { accepted, terminal, ...timings } = outcome;
     runs.push({ scenario, request_id: request.request_id, passed, ...timings });
   }
@@ -68,7 +71,7 @@ export async function prove(env, scenarios) {
 
 function searchRequest(scenario) {
   return {
-    contract_version: 1,
+    contract_version: CONTRACT_VERSION,
     request_id: crypto.randomUUID(),
     execution_key: "search-proof",
     retailer: "fixture",

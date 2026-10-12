@@ -57,7 +57,8 @@ Workers deploy access, Wrangler, and the k3d cluster from the README.
    ```
 
    The connector must register connections with `protocol=quic`. That is the evidence for
-   outbound UDP 7844; it has no HTTP/2 fallback to hide behind.
+   outbound UDP 7844; it has no HTTP/2 fallback to hide behind. If it can't register, that
+   blocks activation: don't widen its NetworkPolicy or switch protocol to make it pass.
 3. **VPC Service.** Fill the Tunnel ID into
    [`deploy/search-proof/vpc-service.json`](../deploy/search-proof/vpc-service.json) and create
    it in the dashboard or with `wrangler vpc service create` (see `--help`; the CLI is beta).
@@ -77,9 +78,10 @@ Workers deploy access, Wrangler, and the k3d cluster from the README.
    curl -sS -X POST "$PROOF_URL/proof" -H "Authorization: Bearer $PROOF_TOKEN" -d '{}'
    ```
 
-   `passed` must be true: `ok` and `fragmented` succeed with `acceptedMs` under 2000 and
-   `terminalMs` at or past 3000 (the responder's delay), all inside 10 000; each faulty stream
-   fails with its expected bounded code. Record the slowest `acceptedMs` of the ten.
+   `passed` must be true: `ok` and `fragmented` succeed with `acceptedMs` under 2000 and the
+   result arriving at least the responder's 3000 ms delay later (`TERMINAL_DELAY_MS`), all
+   inside 10 000; each faulty stream fails with its expected bounded code. A route that
+   buffered the stream would deliver both frames together and fail. Record the slowest `acceptedMs` of the ten.
 
 ## Checks
 
@@ -91,9 +93,9 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | C1 | Account access | step 3 and 4 succeed | VPC Service created and bound |
 | C2 | QUIC over UDP 7844 | connector logs | connections registered with `protocol=quic` |
 | C3 | Cluster DNS/ClusterIP routing | step 5 | every scenario as expected |
-| C4 | No public route | Tunnel has no public hostname or network route; `kubectl get svc -A` | no NodePort/LoadBalancer, no `hostNetwork` pods for this proof |
+| C4 | No public route | Tunnel has no public hostname or network route; `kubectl get svc -A`; `kubectl get pods -l app.kubernetes.io/part-of=groceries-scraper -o jsonpath='{..hostNetwork}'` | no NodePort/LoadBalancer; empty `hostNetwork` output |
 | C5 | Wrong origin credential | `wrangler secret put SCRAPER_ORIGIN_TOKEN` with another value, run `ok` | `rejected`, 401 `unauthorized`; then restore |
-| C6 | Missing origin credential | `kubectl exec deploy/scraper-search -- python -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8080/v1/search', b'{}'))"` | HTTP 401 `unauthorized` |
+| C6 | Missing origin credential (from inside the pod: the Worker always sends one) | `kubectl exec deploy/scraper-search -- python -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8080/v1/search', b'{}'))"` | HTTP 401 `unauthorized` |
 | C7 | Restricted ingress | `kubectl run probe --rm -it --image=curlimages/curl --restart=Never -- curl -m 5 http://scraper-search:8080/healthz` | times out |
 | C8 | No egress from the responder | `kubectl exec deploy/scraper-search -- python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"` | fails |
 | C9 | Non-root, no stray mounts | `kubectl exec deploy/scraper-search -- id`; `… -- ls /var/run/secrets` | uid 10001; only `scraper-search`, no `kubernetes.io` token |
@@ -103,7 +105,8 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | C13 | Connector restart mid-search | as C12 with `deploy/scraper-search-connector` | bounded failure; next run passes once it reconnects |
 | C14 | Delay | `late` scenario | `admission_timeout` at about 2000 ms |
 | C15 | Laptop offline/asleep | disconnect the network or sleep, run `ok` from elsewhere | bounded failure within 10 s; nothing replays on wake |
-| C16 | Credential rotation | new `origin-token`, `kubectl create secret … --dry-run=client -o yaml \| kubectl apply -f -`, run `ok` | old Worker secret rejected (401); passes after updating the Worker secret; no restart needed |
+| C16 | Origin credential rotation | new `origin-token`, `kubectl create secret … --dry-run=client -o yaml \| kubectl apply -f -`, run `ok` | old Worker secret rejected (401); passes after updating the Worker secret; no restart needed |
+| C16b | Tunnel token and proof token rotation | refresh the Tunnel's token, update `scraper-search-connector`, restart the connector; `wrangler secret put PROOF_TOKEN` | old tokens stop working; the proof passes with the new ones |
 | C17 | No retailer traffic | responder and connector logs throughout | only fixture requests; NetworkPolicy C8 holds |
 
 ## Evidence record
@@ -113,7 +116,8 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | Field | Value |
 | --- | --- |
 | Date, operator | |
-| Laptop network (home Wi-Fi, other) | |
+| Laptop OS, sleep settings, network (home Wi-Fi, other) | |
+| Worker colo (`cf-ray` suffix of the proof response) | |
 | k3d/k3s version | |
 | `cloudflared` image | `cloudflare/cloudflared:2026.10.0` (from the overlay) |
 | Tunnel ID / VPC Service ID | |
@@ -121,8 +125,12 @@ Secret: the kubelet refreshes mounted Secrets on its own sync.
 | Proof responder image digest, `--terminal-delay-ms` | |
 | `acceptedMs` over ten `ok` runs (min / median / max) | |
 | `terminalMs` over ten `ok` runs (min / median / max) | |
-| C1–C17 outcomes | |
+| C1–C17 (and C16b) outcomes | |
 | Failures and decisions raised | |
+
+Known limit: the responder's execution slot is per process, and `Recreate` is what stops two
+pods overlapping. That is enough for fixtures; the real service needs the authoritative
+admission the contract requires.
 
 Afterwards: `kubectl delete -k deploy/k8s/overlays/local/search-proof`, delete both Secrets,
 the test Worker, the VPC Service and the Tunnel unless the next ticket reuses them.

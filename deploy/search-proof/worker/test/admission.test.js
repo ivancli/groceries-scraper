@@ -152,7 +152,6 @@ for (const [name, pieces, expected] of [
 }
 
 test("a whole stream over 66 KiB fails even if every frame fits", async () => {
-  // Frames within their own limits, but the stream as a whole exceeds its cap.
   const terminal = result({ pad: "x".repeat(65536 - 300) });
   const padded = accepted({ pad: "y".repeat(1024 - accepted().length - 10) });
 
@@ -210,11 +209,11 @@ test("a failed stream hangs up on the origin", async () => {
 test("a JSON rejection before admission reports the origin's stable code", async () => {
   const body = JSON.stringify({ contract_version: 1, type: "rejected", code: "busy" });
 
-  const outcome = await call(() => streamed([body], { status: 503, contentType: "application/json" }));
+  const outcome = await call(() => streamed([body], { status: 409, contentType: "application/json" }));
 
   assert.deepEqual(
     { ok: outcome.ok, failure: outcome.failure, status: outcome.status, code: outcome.code },
-    { ok: false, failure: "rejected", status: 503, code: "busy" },
+    { ok: false, failure: "rejected", status: 409, code: "busy" },
   );
 });
 

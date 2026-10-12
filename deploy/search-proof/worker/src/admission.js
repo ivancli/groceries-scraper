@@ -1,6 +1,7 @@
 // The Worker side of search v1 admission: one accepted frame within the admission budget,
 // then one matching terminal frame, then EOF — read incrementally, never with .json()/.text().
 
+export const CONTRACT_VERSION = 1;
 const NEWLINE = 0x0a;
 const KIB = 1024;
 export const LIMITS = { accepted: KIB, terminal: 64 * KIB, stream: 66 * KIB, rejection: KIB };
@@ -98,7 +99,7 @@ function checkAccepted(frame, request) {
   if (frame.type === "result" || frame.type === "error") throw new SearchFailure("missing_acceptance");
   if (
     frame.type !== "accepted" ||
-    frame.contract_version !== 1 ||
+    frame.contract_version !== CONTRACT_VERSION ||
     frame.adapter_version !== request.adapter_version ||
     !nonEmptyString(frame.execution_id) ||
     !nonEmptyString(frame.execution_expires_at) ||
@@ -112,7 +113,7 @@ function checkAccepted(frame, request) {
 function checkTerminal(frame, accepted) {
   if (frame.type === "accepted") throw new SearchFailure("duplicate_acceptance");
   const wellFormed =
-    frame.contract_version === 1 &&
+    frame.contract_version === CONTRACT_VERSION &&
     ((frame.type === "result" && nonEmptyString(frame.status) && Array.isArray(frame.results)) ||
       (frame.type === "error" && nonEmptyString(frame.code)));
   if (!wellFormed) throw new SearchFailure("invalid_frame");
