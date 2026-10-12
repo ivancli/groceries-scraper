@@ -1,0 +1,9 @@
+{
+  "url": "https://www.coles.com.au/robots.txt",
+  "status": 200,
+  "observed_at": "2026-10-12T11:42:13.265987+00:00",
+  "user_agent_source": "coles_picks.yaml configured Chrome/141 identity",
+  "source_sha256": "4dd29c8469b9a4f69801c9610fa513456631781b47e773453c139b6716cd73c0",
+  "source_bytes": 1561,
+  "derivation": "Public robots policy only; CRLF line endings normalized to LF. No headers/cookies retained."
+}

@@ -1,0 +1,56 @@
+User-agent: *
+
+Disallow: /content/dam/coles/excel/*
+Disallow: /new
+Disallow: /search/
+Disallow: /checkout/*
+Disallow: /order-confirmation/*
+Disallow: /auth/*
+Disallow: /*/*/*/on-special*
+Disallow: /*/*/*/half-price-specials*
+Disallow: /brand/*
+Disallow: /citrus-preview/*
+Disallow: /preview-iframe/*
+Disallow: /server-error/*
+Disallow: /images/*
+Disallow: /logout*
+Disallow: /test-page*
+Disallow: /*/*/*/test-page*
+Disallow: /remote-spa-xf/*
+Disallow: /3ds-callback/*
+Disallow: /about/coles-app/download?*
+Disallow: /about/test-page*
+Disallow: /help/search*
+Disallow: *?cid=cdc_edm*
+Disallow: *?CID=CDC_eDM*
+Disallow: *?CID=CDC_EDM*
+Disallow: *?cid=Lasoo*
+Disallow: *?cid=digicat*
+Disallow: *?cid=lasoo_catalogue*
+Disallow: *?pid=*
+Disallow: *?utm_source*
+Allow: /on-special?filter_Special=halfprice
+Disallow: *?filter_Special=*
+Disallow: *?filter_ingredients_fruit=*
+Disallow: *?fm=*
+Allow: *?pid=homepage_catnav_footy-finals*
+Allow: *?cid=col_cpc*
+Disallow: /product/*$
+Allow: /product/*-*
+Disallow: /store-locator/
+Disallow: /lists/
+Disallow: /account/
+Disallow: /stores/storedetail
+
+
+User-agent: AdsBot-Google
+
+Disallow:
+
+# Sitemaps
+Sitemap: https://www.coles.com.au/cusp-sitemap.xml
+Sitemap: https://www.coles.com.au/sitemap/sitemap-index-products.xml
+Sitemap: https://www.coles.com.au/sitemap/sitemap-brands.xml
+Sitemap: https://www.coles.com.au/sitemap/sitemap-specials.xml
+Sitemap: https://www.coles.com.au/sitemap/sitemap-categories.xml
+Sitemap: https://www.coles.com.au/sitemap/sitemap-stores.xml
