@@ -31,6 +31,8 @@ const result = (overrides = {}) =>
   }) + "\n";
 
 const pause = (ms) => ({ pause: ms });
+// Node timers may fire a millisecond or two early against performance.now().
+const JITTER_MS = 5;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A Response whose body arrives piece by piece, with pauses between pieces. */
@@ -66,7 +68,7 @@ test("an accepted frame then a delayed result is a success, timed separately", a
   assert.equal(outcome.accepted.execution_id, EXECUTION_ID);
   assert.deepEqual(outcome.terminal.results, []);
   assert.ok(outcome.acceptedMs < 100, `accepted after ${outcome.acceptedMs}ms`);
-  assert.ok(outcome.terminalMs >= 150, `terminal after ${outcome.terminalMs}ms`);
+  assert.ok(outcome.terminalMs >= 150 - JITTER_MS, `terminal after ${outcome.terminalMs}ms`);
 });
 
 test("posts the request with the origin credential to the fixed URL", async () => {
@@ -162,7 +164,7 @@ test("an acceptance later than the admission budget fails without waiting for it
   const outcome = await call(() => streamed([pause(400), accepted(), result()]));
 
   assert.equal(outcome.failure, "admission_timeout");
-  assert.ok(outcome.failedMs >= 200 && outcome.failedMs < 350, `failed after ${outcome.failedMs}ms`);
+  assert.ok(outcome.failedMs >= 200 - JITTER_MS && outcome.failedMs < 350, `failed after ${outcome.failedMs}ms`);
 });
 
 test("status and headers alone do not count as admission", async () => {
@@ -192,7 +194,7 @@ test("a terminal frame later than the total budget fails at the deadline", async
 
   assert.equal(outcome.failure, "deadline_exceeded");
   assert.ok(outcome.acceptedMs < 100);
-  assert.ok(outcome.failedMs >= 600 && outcome.failedMs < 750, `failed after ${outcome.failedMs}ms`);
+  assert.ok(outcome.failedMs >= 600 - JITTER_MS && outcome.failedMs < 750, `failed after ${outcome.failedMs}ms`);
   assert.equal(signal.aborted, true, "the caller hangs up so the origin can free its slot");
 });
 
