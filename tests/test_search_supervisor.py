@@ -485,3 +485,42 @@ def test_a_joined_execution_continues_for_the_callers_that_remain(
     outcome = run(one_detaches())
 
     assert outcome.status == "ok" and outcome.joined
+
+
+def test_a_caller_arriving_after_everyone_detached_is_not_handed_the_cancellation(
+    adapter: SearchAdapter, tmp_path: Path, coordinator: Coordinator
+) -> None:
+    service = supervisor(adapter, tmp_path)
+
+    async def rejoin() -> Outcome:
+        first = asyncio.create_task(service.search(request("hang", key="k", budget_ms=9000)))
+        await asyncio.sleep(0.5)
+        first.cancel()
+        await asyncio.sleep(0)
+        # Same work, but the stopping execution is no longer joinable.
+        outcome = await service.search(request("hang", key="k", budget_ms=9000))
+        await service.idle()
+        return outcome
+
+    assert run(rejoin()).status == "busy"
+
+
+def test_a_joiner_waits_only_until_its_own_deadline(
+    adapter: SearchAdapter, tmp_path: Path, coordinator: Coordinator
+) -> None:
+    service = supervisor(adapter, tmp_path)
+
+    async def short_joiner() -> tuple[Outcome, Outcome, float]:
+        first = asyncio.create_task(service.search(request("slow 1.2", key="k")))
+        await asyncio.sleep(0.2)
+        started = time.monotonic()
+        joined = await service.search(request("slow 1.2", key="k", budget_ms=400))
+        waited = time.monotonic() - started
+        outcome = await first
+        await service.idle()
+        return outcome, joined, waited
+
+    first, joined, waited = run(short_joiner())
+
+    assert (first.status, joined.status) == ("ok", "timeout")
+    assert waited < 0.8

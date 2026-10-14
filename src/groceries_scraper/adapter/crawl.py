@@ -27,10 +27,7 @@ def crawl(
     traffic: RetailerTraffic | None = None,
     overrides: Mapping[str, Any] | None = None,
 ) -> RunOutcome:
-    """Blocks until the crawl ends; Twisted allows one per process.
-
-    `traffic` gates each request to the retailer; `overrides` replace Scrapy settings.
-    """
+    """Blocks until the crawl ends; Twisted allows one per process."""
     index = replay_of.index if replay_of is not None else None
     settings = scrapy_settings(site, run, limit, index, traffic) | dict(overrides or {})
     source = replay_of.run if replay_of is not None else None

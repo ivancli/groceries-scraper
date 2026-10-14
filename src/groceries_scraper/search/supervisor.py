@@ -57,7 +57,7 @@ class SearchRequest:
     expires_at: datetime
 
     @property
-    def work(self) -> tuple[str, ...]:
+    def identity(self) -> tuple[str, ...]:
         """What must match for two requests to share one execution."""
         context = json.dumps(dict(self.context), sort_keys=True)
         return self.execution_key, self.retailer, self.adapter_version, self.query, context
@@ -82,7 +82,7 @@ class Outcome:
 @dataclass
 class _Execution:
     id: str
-    work: tuple[str, ...]
+    identity: tuple[str, ...]
     adapter: SearchAdapter
     request: SearchRequest
     budget: float
@@ -95,8 +95,8 @@ class _Execution:
 
 
 @dataclass
-class _Seen:
-    work: tuple[str, ...]
+class _KnownRequest:
+    identity: tuple[str, ...]
     execution: _Execution
     at: datetime
 
@@ -119,7 +119,7 @@ class Supervisor:
         self.workdir = workdir
         self.grace = grace
         self._executions: dict[str, _Execution] = {}
-        self._seen: dict[str, _Seen] = {}
+        self._known: dict[str, _KnownRequest] = {}
         self._tasks: set[asyncio.Future[Any]] = set()
 
     async def search(
@@ -128,36 +128,60 @@ class Supervisor:
         """Cancelling the caller detaches it; the last caller to detach stops the execution."""
         if (refused := self._refuse_input(request)) is not None:
             return refused
+        # A joiner shares the execution but never waits past its own deadline.
+        budget = min(
+            request.budget_ms / 1000, (request.expires_at - datetime.now(UTC)).total_seconds()
+        )
+        if budget <= 0:
+            return Outcome("timeout", error="expired")
         execution = self._executions.get(request.execution_key)
         joined = execution is not None
         if execution is None:
-            budget = min(
-                request.budget_ms / 1000, (request.expires_at - datetime.now(UTC)).total_seconds()
-            )
-            if budget <= 0:
-                return Outcome("timeout", error="expired")
             execution = self._start(request, budget)
-        elif execution.work != request.work:
+        elif execution.identity != request.identity:
             return Outcome("invalid_request", error="conflicting_input")
-        self._seen[request.request_id] = _Seen(request.work, execution, datetime.now(UTC))
+        self._known[request.request_id] = _KnownRequest(
+            request.identity, execution, datetime.now(UTC)
+        )
         execution.callers += 1
         try:
-            accepted = await asyncio.shield(execution.admission)
-            if isinstance(accepted, Outcome):
-                return accepted
-            if on_accepted is not None:
-                on_accepted(replace(accepted, joined=joined))
-            outcome = await asyncio.shield(execution.result)
+            async with asyncio.timeout(budget):
+                accepted = await asyncio.shield(execution.admission)
+                if isinstance(accepted, Outcome):
+                    return accepted
+                if on_accepted is not None:
+                    on_accepted(replace(accepted, joined=joined))
+                outcome = await asyncio.shield(execution.result)
             return replace(outcome, joined=joined)
+        except TimeoutError:
+            return Outcome("timeout", execution.id, joined=joined)
         finally:
             execution.callers -= 1
             if execution.callers == 0 and not execution.result.done():
-                execution.stop.set()
+                self._stop_execution(execution)
 
     async def idle(self) -> None:
         """Until every execution has been cleaned up."""
         while self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    def _stop_execution(self, execution: _Execution) -> None:
+        execution.stop.set()
+        # Stopping, it can't be joined: the same work starts afresh, Busy until cleanup ends.
+        if self._executions.get(execution.request.execution_key) is execution:
+            del self._executions[execution.request.execution_key]
+
+    def _spawn(self, awaitable: Any) -> None:
+        """Kept until done, so cleanup outlives the caller that started it."""
+        task = asyncio.ensure_future(awaitable)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _forget_expired_requests(self) -> None:
+        now = datetime.now(UTC)
+        for request_id, known in list(self._known.items()):
+            if now - known.at > REMEMBER_REQUESTS:
+                del self._known[request_id]
 
     def _refuse_input(self, request: SearchRequest) -> Outcome | None:
         adapter = self.adapters.get(request.retailer)
@@ -165,19 +189,16 @@ class Supervisor:
             return Outcome("unsupported_retailer")
         if (
             not valid_query(request.query)
-            or request.context.get("location") not in adapter.contexts
+            or request.context.get("location") not in adapter.locations
             or not 0 < request.budget_ms <= MAX_BUDGET_MS
             or not 0 < request.admission_budget_ms <= MAX_ADMISSION_BUDGET_MS
         ):
             return Outcome("invalid_request", error="invalid_input")
-        now = datetime.now(UTC)
-        for request_id, old in list(self._seen.items()):
-            if now - old.at > REMEMBER_REQUESTS:
-                del self._seen[request_id]
-        if (seen := self._seen.get(request.request_id)) is not None:
-            if seen.execution.result.done():
+        self._forget_expired_requests()
+        if (known := self._known.get(request.request_id)) is not None:
+            if known.execution.result.done():
                 return Outcome("invalid_request", error="request_reused")
-            if seen.work != request.work:
+            if known.identity != request.identity:
                 return Outcome("invalid_request", error="conflicting_input")
         return None
 
@@ -185,7 +206,7 @@ class Supervisor:
         loop = asyncio.get_running_loop()
         execution = _Execution(
             request.request_id,
-            request.work,
+            request.identity,
             self.adapters[request.retailer],
             request,
             budget,
@@ -193,9 +214,7 @@ class Supervisor:
             loop.create_future(),
         )
         self._executions[request.execution_key] = execution
-        task = asyncio.create_task(self._run(execution, time.monotonic() + budget))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._spawn(self._run(execution, time.monotonic() + budget))
         return execution
 
     async def _run(self, execution: _Execution, deadline: float) -> None:
@@ -207,6 +226,9 @@ class Supervisor:
             execution.admission.set_result(
                 Accepted(execution.id, admitted.deadline_at, joined=False)
             )
+            if execution.stop.is_set():  # every caller left during admission: run nothing
+                await asyncio.to_thread(self._end, admitted)
+                return
             await self._execute(execution, admitted, deadline)
         finally:
             if self._executions.get(execution.request.execution_key) is execution:
@@ -245,12 +267,16 @@ class Supervisor:
         return result
 
     def _end_unused(self, admission: "asyncio.Future[Any]") -> None:
-        if not admission.cancelled() and isinstance(admitted := admission.result(), Admitted):
-            task = asyncio.ensure_future(asyncio.to_thread(self.coordinator.end_search, admitted))
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+        if admission.cancelled() or admission.exception() is not None:
+            return
+        if isinstance(admitted := admission.result(), Admitted):
+            self._spawn(asyncio.to_thread(self._end, admitted))
 
     async def _execute(self, execution: _Execution, admitted: Admitted, deadline: float) -> None:
+        if deadline - time.monotonic() <= DELIVERY_MARGIN:
+            await asyncio.to_thread(self._end, admitted)
+            execution.result.set_result(Outcome("timeout", execution.id))
+            return
         base = Path(tempfile.mkdtemp(prefix="search-", dir=self.workdir))
         ours, theirs = socket.socketpair()
         env = {name: os.environ[name] for name in ENV_ALLOWLIST if name in os.environ}

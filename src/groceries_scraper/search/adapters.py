@@ -77,7 +77,7 @@ class SearchAdapter:
         return (urlsplit(self.spec.url.replace(QUERY, "q")).hostname or "",)
 
     @property
-    def contexts(self) -> tuple[str, ...]:
+    def locations(self) -> tuple[str, ...]:
         """Locations a request may name; the Site's own, or the default one."""
         return tuple(self.site.locations) or (DEFAULT_LOCATION,)
 

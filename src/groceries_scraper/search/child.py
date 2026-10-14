@@ -5,6 +5,7 @@ talks to it over the socket FD: the job in, Retailer Permits back and forth, one
 """
 
 import asyncio
+import itertools
 import json
 import socket
 import sys
@@ -58,10 +59,9 @@ class Channel:
 class SupervisorPermits:
     """Permits granted to the admitted execution; the child never holds a credential."""
 
-    def __init__(self, channel: Channel, retailer: str) -> None:
+    def __init__(self, channel: Channel) -> None:
         self.channel = channel
-        self.retailer = retailer
-        self._ids = iter(range(1, 1_000_000))
+        self._ids = itertools.count(1)
 
     async def acquire(self, retailer: str, *, paced: bool, charge: bool) -> Permit:
         request = {"type": "permit", "id": next(self._ids), "paced": paced, "charge": charge}
@@ -142,7 +142,7 @@ def main(argv: list[str]) -> int:
     site = search_site(adapter, job["query"])
     location = site.resolve_location(job["location"])
     run = create_run(Path("runs"), site.site, location=location)
-    permits = SupervisorPermits(channel, adapter.retailer)
+    permits = SupervisorPermits(channel)
     traffic = RetailerTraffic(adapter.retailer, adapter.hosts, permits, BLOCKED_RESOURCES)
     outcome = crawl(site, run, traffic=traffic, overrides=search_settings(float(job["budget"])))
     # A repeated product is the retailer's duplicate tile, not a broken one.

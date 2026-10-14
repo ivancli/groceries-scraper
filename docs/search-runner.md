@@ -79,11 +79,12 @@ The supervisor's own outcomes are:
 
 ## Cancellation and cleanup
 
-- **Coalescing:** callers with the same `execution_key` and identical input share one execution, and a joining caller doesn't extend its deadline. The same `execution_key` or request id with different input is refused. A finished request id is refused for 15 minutes in this process. Across restarts, admission ids, which are the admitting request ids, can't be reused.
-- **Detach:** cancelling a caller's `search` detaches it. When the last caller detaches, the execution stops.
+- **Coalescing:** callers with the same `execution_key` and identical input share one execution. A joining caller doesn't extend its deadline, and it stops waiting (`timeout`) at its own. The same `execution_key` or request id with different input is refused. A finished request id is refused for 15 minutes in this process. Across restarts, admission ids, which are the admitting request ids, can't be reused.
+- **Detach:** cancelling a caller's `search` detaches it. When the last caller detaches, the execution stops and can no longer be joined: the same work starts afresh, and is Busy until cleanup ends. If every caller leaves during admission, no child is started.
 - **Stopping the child:** at the end of every execution, the child's whole session gets SIGTERM, then SIGKILL after the grace period. The child is the leader of a new session, so its browser and any other descendants are included. Admission ends only once `/proc` shows nothing left running in that session.
 - **When stopping fails:** if anything survives, admission stays held and the operator recovers it ([recovery](traffic-coordination.md#recovery-authority)).
 - **Restarts:** nothing is persisted, so a restart never replays work.
+- **Shutdown:** await `Supervisor.idle()` so that in-progress cleanups finish before the event loop closes.
 
 ## Deployment (#88)
 
