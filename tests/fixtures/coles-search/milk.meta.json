@@ -1,0 +1,11 @@
+{
+  "query": "milk",
+  "response_url": "https://www.coles.com.au/search/products?q=milk",
+  "status": 200,
+  "observed_at": "2026-10-10T12:48:30.710074+00:00",
+  "origin": "unverified-device",
+  "source_sha256": "41f360c8bcd06b7ffae0d60f7d3c4b517d26e3ef6a7fc1b6d6d03a4b1d0d062c",
+  "source_bytes": 639381,
+  "derivation": "Allowlisted search membership fields and DOM-issued product links/titles/image references. Nonempty advertising identifiers replaced by presence markers. No cookies, profiles, search-session IDs, prices or tracking data.",
+  "browser_context_observation": "Delivery to Melbourne 3000 in the retained public browser evidence; absent from the initial document. Home Store not applied."
+}

@@ -336,6 +336,10 @@ kubectl exec postgres-0 -- psql -U scrape -d "$db" -c \
 
 ### Prove the private search route
 
+The [disabled Coles discovery adapter](docs/coles-search-adapter.md) replays genuine retained
+search evidence independently of price ingestion. It remains disabled pending missing live
+fixtures, an access-policy resolution, service integration and launch proof.
+
 Product Search will reach the scraper only through a private Workers VPC Service and its own
 `cloudflared` connector. Before any real search runs,
 [the route proof](docs/search-connectivity-proof.md) exercises that path with a fixture-only
