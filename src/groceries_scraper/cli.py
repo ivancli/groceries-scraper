@@ -517,7 +517,11 @@ def run(
     supplied = None if supply is None else _supply_or_exit(site, supply)
     new_run = create_run(RUNS_DIR, site.site, location=location, run_id=run_id)
     typer.echo(f"Run {new_run.run_id}: {new_run.path}", err=True)
-    outcome = crawl(site, new_run, limit, supply=supplied)
+    from groceries_scraper.adapter.traffic import RetailerTraffic
+
+    outcome = crawl(
+        site, new_run, limit, supply=supplied, traffic=RetailerTraffic.from_environment(site)
+    )
     _report_and_exit(outcome, new_run.path, sinks, archive)
 
 

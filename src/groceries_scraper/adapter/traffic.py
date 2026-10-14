@@ -1,4 +1,4 @@
-"""Retailer request permits for a price Run, taken as each request is actually sent."""
+"""Retailer request permits for a Run, taken as each request is actually sent."""
 
 import asyncio
 import os
@@ -6,7 +6,7 @@ import socket
 import weakref
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urlsplit
 
 from scrapy import Request
@@ -29,43 +29,28 @@ LEASE = timedelta(minutes=5)
 MAX_POLL = 0.5  # seconds between tries while the retailer's requests in flight are full
 
 
+class PermitSource(Protocol):
+    async def acquire(self, retailer: str, *, paced: bool, charge: bool) -> Permit:
+        """Raises CoordinatorUnavailable instead of letting a request go uncoordinated."""
+        ...
+
+    async def release(self, permit: Permit) -> None: ...
+
+
 @dataclass
-class RetailerTraffic:
-    """Shared by the download handlers and the browser hook; deep-copied with the settings."""
+class CoordinatorPermits:
+    """A price Job's: it holds the restricted credential and waits its turn."""
 
     dsn: str = field(repr=False)
-    retailer: str
-    hosts: tuple[str, ...]
     policy: Policy
     holder: str
     _coordinator: Coordinator | None = field(default=None, init=False, repr=False)
 
-    @classmethod
-    def from_environment(cls, site: Site) -> "RetailerTraffic | None":
-        """Coordinated when the Job is given the coordination Secret."""
-        dsn = os.environ.get("SCRAPE_COORDINATOR")
-        if not dsn or site.accepts is None:
-            return None
-        password = os.environ.get("SCRAPE_COORDINATOR_PASSWORD")
-        if password:
-            from psycopg.conninfo import make_conninfo
-
-            dsn = make_conninfo(dsn, password=password)
-        holder = os.environ.get("SCRAPE_JOB_NAME") or f"{socket.gethostname()}:{os.getpid()}"
-        return cls(
-            dsn, site.accepts.retailer.key, site.accepts.retailer_hosts, site_policy(site), holder
-        )
-
-    def covers(self, url: str) -> bool:
-        host = (urlsplit(url).hostname or "").lower()
-        return any(host == known or host.endswith("." + known) for known in self.hosts)
-
-    async def acquire(self, *, paced: bool = True, charge: bool = False) -> Permit:
-        """Waits for the retailer's pace and concurrency; never sends uncoordinated."""
+    async def acquire(self, retailer: str, *, paced: bool, charge: bool) -> Permit:
         while True:
             result = await asyncio.to_thread(
                 self._client().acquire_permit,
-                self.retailer,
+                retailer,
                 self.holder,
                 self.policy,
                 lease=LEASE,
@@ -88,6 +73,42 @@ class RetailerTraffic:
         if self._coordinator is None:
             self._coordinator = Coordinator(self.dsn)
         return self._coordinator
+
+
+@dataclass
+class RetailerTraffic:
+    """Shared by the download handlers and the browser hook; deep-copied with the settings."""
+
+    retailer: str
+    hosts: tuple[str, ...]
+    permits: PermitSource
+    # Browser resource types aborted unsent, whoever's host they're for.
+    blocked_resources: frozenset[str] = frozenset()
+
+    @classmethod
+    def from_environment(cls, site: Site) -> "RetailerTraffic | None":
+        """Coordinated when the Job is given the coordination Secret."""
+        dsn = os.environ.get("SCRAPE_COORDINATOR")
+        if not dsn or site.accepts is None:
+            return None
+        password = os.environ.get("SCRAPE_COORDINATOR_PASSWORD")
+        if password:
+            from psycopg.conninfo import make_conninfo
+
+            dsn = make_conninfo(dsn, password=password)
+        holder = os.environ.get("SCRAPE_JOB_NAME") or f"{socket.gethostname()}:{os.getpid()}"
+        permits = CoordinatorPermits(dsn, site_policy(site), holder)
+        return cls(site.accepts.retailer.key, site.accepts.retailer_hosts, permits)
+
+    def covers(self, url: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower()
+        return any(host == known or host.endswith("." + known) for known in self.hosts)
+
+    async def acquire(self, *, paced: bool = True, charge: bool = False) -> Permit:
+        return await self.permits.acquire(self.retailer, paced=paced, charge=charge)
+
+    async def release(self, permit: Permit) -> None:
+        await self.permits.release(permit)
 
 
 def site_policy(site: Site) -> Policy:
@@ -134,6 +155,8 @@ class BrowserPermits:
     _pages: "weakref.WeakSet[Page]" = field(default_factory=weakref.WeakSet, repr=False)
 
     async def __call__(self, request: "BrowserRequest") -> bool:
+        if request.resource_type in self.traffic.blocked_resources:
+            return True
         if not self.traffic.covers(request.url):
             return False
         page = request.frame.page
